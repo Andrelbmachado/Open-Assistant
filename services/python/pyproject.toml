@@ -1,0 +1,21 @@
+[project]
+name = "open-assistant-sidecar"
+version = "0.0.0"
+description = "Open Assistant Python sidecar: voice (STT/TTS) and OS-level desktop automation."
+requires-python = ">=3.10"
+dependencies = [
+  # Voice
+  "faster-whisper>=1.0",
+  "piper-tts>=1.2",
+  # Desktop automation / vision
+  "pyautogui>=0.9",
+  "mss>=9.0",
+  "pillow>=10.0",
+  "pytesseract>=0.3",
+  # RPC
+  "websockets>=12.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

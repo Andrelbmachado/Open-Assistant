@@ -1,0 +1,20 @@
+{
+  "name": "open-assistant",
+  "version": "0.0.0",
+  "private": true,
+  "description": "An open-source, local-first, agentic personal assistant that operates your computer.",
+  "license": "MIT",
+  "packageManager": "pnpm@9.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter @open-assistant/desktop tauri dev",
+    "build": "pnpm --filter @open-assistant/desktop build"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3"
+  }
+}

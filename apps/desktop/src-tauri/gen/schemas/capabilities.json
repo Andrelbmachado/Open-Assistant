@@ -1,0 +1,1 @@
+{"main-capability":{"identifier":"main-capability","description":"Capability for the main window","local":true,"windows":["main"],"permissions":["core:default","shell:default",{"identifier":"shell:allow-execute","allow":[{"args":true,"cmd":"powershell.exe","name":"powershell"},{"args":true,"cmd":"cmd.exe","name":"cmd"},{"args":true,"cmd":"wsl.exe","name":"wsl"}]}]}}

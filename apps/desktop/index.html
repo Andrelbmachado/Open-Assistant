@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Open Assistant</title>
+  </head>
+  <body>
+    <div id="error-log" style="color:red; z-index:9999; position:absolute; top: 0; left: 0; background: black;"></div>
+    <script>
+      window.onerror = function(message, source, lineno, colno, error) {
+        document.getElementById('error-log').innerHTML += message + '<br>';
+      };
+      window.onunhandledrejection = function(event) {
+        document.getElementById('error-log').innerHTML += event.reason + '<br>';
+      };
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Open Assistant",
+  "version": "0.0.0",
+  "identifier": "com.openassistant.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      { "title": "Open Assistant", "width": 1280, "height": 800 }
+    ],
+    "security": { "csp": null }
+  }
+}
