@@ -1,10 +1,14 @@
 import React, { useState, useRef, useEffect } from "react";
+import { Rnd } from "react-rnd";
 import "./ContextPane.css";
 
 interface ContextPaneProps {
   isCollapsed: boolean;
   onToggle: () => void;
   currentView?: string;
+  position?: 'right' | 'bottom' | 'floating';
+  onPositionChange?: (pos: 'right' | 'bottom' | 'floating') => void;
+  onClose?: () => void;
 }
 
 interface ChatMessage {
@@ -14,7 +18,7 @@ interface ChatMessage {
   command?: string;
 }
 
-export function ContextPane({ isCollapsed, onToggle, currentView }: ContextPaneProps) {
+export function ContextPane({ isCollapsed, onToggle, currentView, position = 'right', onPositionChange, onClose }: ContextPaneProps) {
   const [chatInput, setChatInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([{
@@ -101,13 +105,38 @@ You MUST output a JSON object with exactly two keys:
   };
 
   if (currentView === 'terminal') {
-    return (
-      <aside className="context-pane" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <div className="pane-header" style={{ paddingBottom: '14px', borderBottom: '1px solid rgba(33, 231, 255, 0.2)', marginBottom: '14px' }}>
-          {!isCollapsed && <h3 style={{ color: 'var(--cyan)', fontSize: '16px', fontWeight: 'bold' }}>Terminal AI</h3>}
-          <button onClick={onToggle} style={{ background: 'transparent', border: 'none', color: 'var(--cyan)', cursor: 'pointer', padding: '4px', margin: isCollapsed ? '0 auto' : '0' }} title="Toggle Sidebar">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
-          </button>
+    const paneContent = (
+      <aside className={`context-pane ${position === 'floating' ? 'floating-panel' : ''}`} style={{ height: '100%', display: 'flex', flexDirection: 'column', margin: 0 }}>
+        <div className="pane-header pane-handle" style={{ paddingBottom: '14px', borderBottom: '1px solid rgba(33, 231, 255, 0.2)', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: position === 'floating' ? 'move' : 'default' }}>
+          <h3 style={{ color: 'var(--cyan)', fontSize: '16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path></svg>
+            Terminal AI
+          </h3>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {onPositionChange && (
+              <>
+                <button 
+                  onClick={() => onPositionChange('floating')} 
+                  style={{ background: position === 'floating' ? 'var(--cyan-soft)' : 'transparent', border: '1px solid var(--cyan-soft)', color: 'var(--cyan)', cursor: 'pointer', padding: '4px 8px', borderRadius: '4px', fontSize: '12px' }} 
+                  title="Flutuar Tela"
+                >
+                  🪟
+                </button>
+                <button 
+                  onClick={() => onPositionChange(position === 'right' ? 'bottom' : 'right')} 
+                  style={{ background: 'transparent', border: '1px solid var(--cyan-soft)', color: 'var(--cyan)', cursor: 'pointer', padding: '4px 8px', borderRadius: '4px', fontSize: '12px' }} 
+                  title={`Acoplar em ${position === 'right' ? 'Baixo' : 'Direita'}`}
+                >
+                  {position === 'right' ? '⬇️' : '➡️'}
+                </button>
+              </>
+            )}
+            {onClose && (
+              <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: '#ff4c6a', cursor: 'pointer', padding: '4px' }} title="Fechar Terminal AI">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+            )}
+          </div>
         </div>
         
         {!isCollapsed && (
@@ -172,6 +201,28 @@ You MUST output a JSON object with exactly two keys:
         )}
       </aside>
     );
+
+    if (position === 'floating') {
+      return (
+        <Rnd
+          default={{
+            x: window.innerWidth / 2 - 175,
+            y: window.innerHeight / 2 - 250,
+            width: 350,
+            height: 500,
+          }}
+          minWidth={280}
+          minHeight={300}
+          bounds="window"
+          dragHandleClassName="pane-handle"
+          style={{ zIndex: 1000 }}
+        >
+          {paneContent}
+        </Rnd>
+      );
+    }
+
+    return paneContent;
   }
 
   return (

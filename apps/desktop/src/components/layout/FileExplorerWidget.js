@@ -3,6 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { readDir } from '@tauri-apps/plugin-fs';
 export function FileExplorerWidget() {
     const [currentPath, setCurrentPath] = useState('C:\\Users');
+    const [history, setHistory] = useState(['C:\\Users']);
+    const [showHistory, setShowHistory] = useState(false);
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
     const [inputPath, setInputPath] = useState(currentPath);
@@ -32,21 +34,22 @@ export function FileExplorerWidget() {
         }
         setLoading(false);
     };
+    const navigateTo = (path) => {
+        setCurrentPath(path);
+        if (!history.includes(path)) {
+            setHistory(prev => [path, ...prev].slice(0, 10));
+        }
+    };
     const handleNavigate = (folderName) => {
         const sep = currentPath.endsWith('\\') ? '' : '\\';
-        setCurrentPath(currentPath + sep + folderName);
+        navigateTo(currentPath + sep + folderName);
     };
-    const handleUpDir = () => {
+    const handleBack = () => {
         const parts = currentPath.split('\\').filter(Boolean);
         if (parts.length > 1) {
             parts.pop();
-            setCurrentPath(parts.join('\\') + '\\');
+            navigateTo(parts.join('\\') + '\\');
         }
     };
-    const handleInputSubmit = (e) => {
-        if (e.key === 'Enter') {
-            setCurrentPath(inputPath);
-        }
-    };
-    return (_jsxs("div", { style: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }, children: [_jsxs("div", { style: { display: 'flex', gap: '8px', marginBottom: '10px' }, children: [_jsx("button", { onClick: handleUpDir, style: { background: 'rgba(33, 231, 255, 0.1)', border: '1px solid var(--cyan-soft)', color: 'var(--cyan)', cursor: 'pointer', padding: '0 8px' }, children: "\u2191" }), _jsx("input", { type: "text", value: inputPath, onChange: e => setInputPath(e.target.value), onKeyDown: handleInputSubmit, style: { flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--cyan-soft)', color: 'var(--text)', padding: '4px 8px', outline: 'none', fontFamily: 'monospace' } })] }), _jsx("div", { style: { flex: 1, overflowY: 'auto', border: '1px solid rgba(33, 231, 255, 0.05)', padding: '4px' }, children: loading ? (_jsx("div", { className: "micro-text", children: "Scanning..." })) : (_jsx("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(60px, 1fr))', gap: '8px' }, children: files.map((f, i) => (_jsxs("div", { onClick: () => f.isDir && handleNavigate(f.name), style: { textAlign: 'center', cursor: f.isDir ? 'pointer' : 'default', padding: '4px', opacity: f.name === 'Access Denied or Invalid Path' ? 0.5 : 1 }, title: f.name, children: [_jsx("div", { style: { color: f.isDir ? 'var(--cyan)' : 'var(--text)', fontSize: '24px', marginBottom: '4px' }, children: f.isDir ? '📁' : '📄' }), _jsx("div", { className: "micro-text", style: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '9px' }, children: f.name })] }, i))) })) })] }));
+    return (_jsxs("div", { style: { flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }, children: [_jsxs("div", { style: { display: 'flex', gap: '8px', marginBottom: '10px', position: 'relative' }, children: [_jsx("button", { onClick: handleBack, style: { background: 'rgba(33, 231, 255, 0.1)', border: '1px solid var(--cyan-soft)', color: 'var(--cyan)', cursor: 'pointer', padding: '0 8px' }, children: "\u2191" }), _jsxs("div", { style: { flex: 1, position: 'relative', display: 'flex' }, children: [_jsx("input", { type: "text", value: inputPath, onChange: e => setInputPath(e.target.value), onKeyDown: e => e.key === 'Enter' && navigateTo(inputPath), style: { flex: 1, background: 'rgba(0,0,0,0.3)', border: '1px solid var(--cyan-soft)', color: 'var(--text)', padding: '4px 8px', outline: 'none', fontFamily: 'monospace' } }), _jsx("button", { onClick: () => setShowHistory(!showHistory), style: { background: 'transparent', border: '1px solid var(--cyan-soft)', borderLeft: 'none', color: 'var(--cyan)', padding: '0 8px', cursor: 'pointer' }, children: "\u25BC" }), showHistory && (_jsx("div", { style: { position: 'absolute', top: '100%', left: 0, right: 0, background: '#1a1a1a', border: '1px solid var(--cyan)', zIndex: 100, maxHeight: '150px', overflowY: 'auto' }, children: history.map((h, i) => (_jsx("div", { onClick: () => { navigateTo(h); setShowHistory(false); }, style: { padding: '6px 8px', cursor: 'pointer', fontSize: '12px', color: 'var(--text)', borderBottom: '1px solid #333' }, children: h }, i))) }))] })] }), _jsx("div", { style: { flex: 1, overflowY: 'auto', border: '1px solid rgba(33, 231, 255, 0.05)', padding: '4px' }, children: loading ? (_jsx("div", { className: "micro-text", children: "Scanning..." })) : (_jsx("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(60px, 1fr))', gap: '8px' }, children: files.map((f, i) => (_jsxs("div", { onClick: () => f.isDir && handleNavigate(f.name), style: { textAlign: 'center', cursor: f.isDir ? 'pointer' : 'default', padding: '4px', opacity: f.name === 'Access Denied or Invalid Path' ? 0.5 : 1 }, title: f.name, children: [_jsx("div", { style: { color: f.isDir ? 'var(--cyan)' : 'var(--text)', fontSize: '24px', marginBottom: '4px' }, children: f.isDir ? '📁' : '📄' }), _jsx("div", { className: "micro-text", style: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '9px' }, children: f.name })] }, i))) })) })] }));
 }

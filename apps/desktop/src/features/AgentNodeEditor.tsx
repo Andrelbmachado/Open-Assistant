@@ -10,12 +10,18 @@ import {
   Position,
   type Connection,
   type Edge,
-  type Node
+  type Node,
+  type OnConnectEnd,
 } from '@xyflow/react';
 
 import '@xyflow/react/dist/style.css';
 import './AgentNodeEditor.css';
 import type { Agent } from './AgentsView';
+import { BlenderNode } from './BlenderNode';
+
+const nodeTypes = {
+  blender: BlenderNode
+};
 
 interface AgentNodeEditorProps {
   agent: Agent;
@@ -24,123 +30,99 @@ interface AgentNodeEditorProps {
 
 const defaultNode: Node = {
   id: '1',
-  type: 'input',
-  data: { label: 'Start' },
+  type: 'blender',
+  data: { 
+    title: 'Start',
+    type: 'start',
+    inputs: [{ id: 'in', label: 'In' }],
+    outputs: [{ id: 'out', label: 'Trigger' }]
+  },
   position: { x: 50, y: 150 },
-  sourcePosition: Position.Right,
-  targetPosition: Position.Left,
-  className: 'custom-node input-node',
+  className: 'custom-node'
 };
 
 export function AgentNodeEditor({ agent, onBack }: AgentNodeEditorProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState([defaultNode]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [prompt, setPrompt] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const onConnect = useCallback(
-    (params: Connection | Edge) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#007aff' } } as any, eds)),
+    (params: Connection | Edge) => setEdges((eds) => addEdge({ ...params, style: { stroke: '#888', strokeWidth: 2 } } as any, eds)),
     [setEdges],
   );
 
-  const generateNodesFromPrompt = async () => {
-    if (!prompt.trim() || isGenerating) return;
-    
-    const apiKey = localStorage.getItem("openai_api_key");
-    if (!apiKey) {
-      alert("Please configure your OpenAI API Key in Settings first.");
-      return;
-    }
+  const [menuState, setMenuState] = useState<{ isOpen: boolean, x: number, y: number, sourceId: string | null }>({ isOpen: false, x: 0, y: 0, sourceId: null });
 
-    setIsGenerating(true);
-
-    try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: "gpt-4o",
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "system",
-              content: `You are an AI architect. The user will give you a task. Convert it into a sequence of functional steps (nodes) for a visual workflow editor. Output ONLY a JSON object with a single "nodes" array. Each object in the array must have "id" (string starting from "2"), "label" (short title), and "type" (one of: 'process', 'web_search', 'file_write', 'api_call', 'output'). Output JSON only.`
-            },
-            {
-              role: "user",
-              content: prompt
-            }
-          ]
-        })
+  const onConnectEnd: OnConnectEnd = useCallback(
+    (event: any, connectionState) => {
+      if (connectionState.isValid || !connectionState.fromNode) return;
+      
+      const { clientX, clientY } = 'changedTouches' in event ? event.changedTouches[0] : event;
+      
+      // Always show menu on drop (as requested by user "soltar em qualquer lugar")
+      setMenuState({
+        isOpen: true,
+        x: clientX,
+        y: clientY,
+        sourceId: connectionState.fromNode.id
       });
+    },
+    []
+  );
 
-      if (!response.ok) throw new Error("Failed to generate workflow.");
-      
-      const data = await response.json();
-      const content = data.choices[0].message.content;
-      const parsed = JSON.parse(content);
-      
-      const newNodes: Node[] = [defaultNode];
-      const newEdges: Edge[] = [];
-      let currentX = 350;
-      let lastId = "1";
+  const handleAddAction = (type: string, label: string) => {
+    if (!menuState.sourceId) return;
+    const sourceNode = nodes.find(n => n.id === menuState.sourceId);
+    if (!sourceNode) return;
 
-      if (parsed.nodes && Array.isArray(parsed.nodes)) {
-        parsed.nodes.forEach((n: any, idx: number) => {
-          const isOutput = idx === parsed.nodes.length - 1 || n.type === 'output';
-          const nodeClass = isOutput ? 'custom-node output-node' : 'custom-node agent-node';
-          const nodeType = isOutput ? 'output' : 'default';
-
-          newNodes.push({
-            id: n.id,
-            type: nodeType,
-            data: { label: n.label },
-            position: { x: currentX, y: 150 },
-            sourcePosition: Position.Right,
-            targetPosition: Position.Left,
-            className: nodeClass,
-          });
-
-          newEdges.push({
-            id: `e${lastId}-${n.id}`,
-            source: lastId,
-            target: n.id,
-            animated: true,
-            style: { stroke: '#007aff' }
-          });
-
-          lastId = n.id;
-          currentX += 300;
-        });
-      }
-
-      setNodes(newNodes);
-      setEdges(newEdges);
-      setPrompt("");
-
-    } catch (err) {
-      console.error(err);
-      alert("Error generating nodes. See console.");
-    } finally {
-      setIsGenerating(false);
+    const newId = `node-${Date.now()}`;
+    let nodeData: any = { title: label, type, prompt: '' };
+    
+    // All nodes now use the uniform dashboard card style
+    switch(type) {
+      case 'ia':
+        nodeData.headerColor = '#3d8a57';
+        nodeData.inputs = [{ id: 'in', label: 'Contexto', color: '#ffb300' }];
+        nodeData.outputs = [{ id: 'out', label: 'Resposta', color: '#ffb300' }];
+        break;
+      default:
+        nodeData.headerColor = '#555';
+        nodeData.inputs = [{ id: 'in', label: 'In', color: '#aaa' }];
+        nodeData.outputs = [{ id: 'out', label: 'Out', color: '#aaa' }];
     }
+
+    const newNode: Node = {
+      id: newId,
+      type: 'blender',
+      position: { x: sourceNode.position.x + 250, y: sourceNode.position.y },
+      data: nodeData,
+      className: 'custom-node'
+    };
+
+    const newEdge: Edge = {
+      id: `e${sourceNode.id}-${newId}`,
+      source: sourceNode.id,
+      sourceHandle: 'out',
+      target: newId,
+      targetHandle: 'in',
+      animated: false,
+      style: { stroke: '#888', strokeWidth: 2 }
+    };
+
+    setNodes(nds => [...nds, newNode]);
+    setEdges(eds => [...eds, newEdge]);
+    setMenuState(prev => ({ ...prev, isOpen: false }));
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') generateNodesFromPrompt();
-  };
+
 
   return (
     <div className="agent-editor-container">
       <div className="editor-toolbar glass-panel">
         <div className="toolbar-left">
-          <button className="icon-btn" onClick={onBack} title="Back to Agents">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+          <button className="back-btn" onClick={onBack} title="Back to Agents">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
           </button>
           <div className="agent-header-info">
             <h3>{agent.name}</h3>
@@ -160,47 +142,51 @@ export function AgentNodeEditor({ agent, onBack }: AgentNodeEditorProps) {
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onConnectEnd={onConnectEnd}
+          connectionLineStyle={{ stroke: '#888', strokeWidth: 3 }}
           fitView
           colorMode="dark"
         >
           <Controls className="custom-controls" />
-          <MiniMap nodeStrokeWidth={3} className="custom-minimap" />
           <Background color="#555" gap={16} />
         </ReactFlow>
 
-        <div className="agent-chatbot glass-panel">
-          <div className="chatbot-header">
-            <h4>Prompt to Nodes</h4>
-            <span className="ai-badge">AI</span>
+        {menuState.isOpen && (
+          <>
+            <div 
+              style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999 }} 
+              onClick={() => setMenuState(prev => ({ ...prev, isOpen: false }))} 
+            />
+            <div className="node-context-menu" style={{ top: menuState.y, left: menuState.x }}>
+              <h4>Adicionar Ação</h4>
+            <button className="node-context-btn" onClick={() => handleAddAction('mensageiro', 'Mensageiro')}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+              Mensageiro
+            </button>
+            <button className="node-context-btn" onClick={() => handleAddAction('conexao', 'Conexão')}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+              Conexão
+            </button>
+            <button className="node-context-btn" onClick={() => handleAddAction('armazenamento', 'Armazenamento')}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+              Armazenamento
+            </button>
+            <button className="node-context-btn" onClick={() => handleAddAction('acao_local', 'Ação Local')}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+              Ação Local
+            </button>
+            <button className="node-context-btn" onClick={() => handleAddAction('ia', 'Agente IA')}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+              Agente IA
+            </button>
           </div>
-          <div className="chatbot-body">
-            <p className="chatbot-instructions">Describe what this agent should do. I will generate the workflow nodes automatically.</p>
-            <div className="input-group">
-              <input 
-                type="text" 
-                placeholder="E.g., Read file -> extract emails -> save as CSV" 
-                value={prompt}
-                onChange={e => setPrompt(e.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={isGenerating}
-              />
-              <button 
-                className="icon-btn" 
-                onClick={generateNodesFromPrompt} 
-                disabled={!prompt.trim() || isGenerating}
-              >
-                {isGenerating ? (
-                   <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="4.93" x2="19.07" y2="7.76"></line></svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
+          </>
+        )}
+
       </div>
     </div>
   );

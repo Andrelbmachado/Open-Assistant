@@ -13,7 +13,7 @@ interface TerminalSession {
   shell: ShellType;
 }
 
-export function TerminalPane() {
+export function TerminalPane({ onOpenAiTerminal, isAiTerminalOpen }: { onOpenAiTerminal?: () => void, isAiTerminalOpen?: boolean }) {
   const [sessions, setSessions] = useState<TerminalSession[]>([
     { id: `term-${Date.now()}`, name: "PowerShell", shell: "powershell" }
   ]);
@@ -97,6 +97,16 @@ export function TerminalPane() {
             </div>
           )}
         </div>
+
+        {!isAiTerminalOpen && onOpenAiTerminal && (
+          <button 
+            onClick={onOpenAiTerminal}
+            style={{ position: 'absolute', right: '16px', top: '8px', background: 'var(--cyan-soft)', border: '1px solid var(--cyan)', color: 'var(--text)', padding: '4px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path></svg>
+            Abrir Terminal AI
+          </button>
+        )}
       </div>
 
       <div style={{ flex: 1, position: 'relative' }}>
@@ -138,82 +148,93 @@ function TerminalInstance({ isActive, shellType }: { isActive: boolean, shellTyp
       setTimeout(() => { try { fitAddon.fit(); } catch(e){} }, 50);
     }
     xtermRef.current = term;
-    term.writeln(`Initializing ${shellType}...`);
 
     let isMounted = true;
+    let isExecuting = false;
 
-    async function spawnShell() {
-      try {
-        let shellName = "powershell";
-        let args: string[] = [];
+    // REPL Loop
+    term.writeln(`\x1b[36mOpen Assistant Terminal - ${shellType} Mode\x1b[0m`);
+    term.writeln('Type a command and press Enter.\r\n');
+    const prompt = () => term.write('\r\n\x1b[32mPS >\x1b[0m ');
+    prompt();
 
-        if (shellType === "powershell") {
-          shellName = "powershell";
-          args = ["-NoExit", "-Command", "-"] ;
-        } else if (shellType === "cmd") {
-          shellName = "cmd";
-          args = [];
-        } else if (shellType === "wsl") {
-          shellName = "wsl";
-          args = [];
-        }
-
-        const cmd = Command.create(shellName, args);
+    term.onData(async (data) => {
+      if (isExecuting) return;
+      
+      if (data === '\r') {
+        const cmdString = inputBufferRef.current.trim();
+        inputBufferRef.current = "";
+        term.write('\r\n');
         
-        cmd.on('close', (data: any) => {
-          if (isMounted && xtermRef.current) xtermRef.current.writeln(`\r\n[Process exited with code ${data.code}]`);
-        });
-        
-        cmd.on('error', (error: any) => {
-          if (isMounted && xtermRef.current) xtermRef.current.writeln(`\r\n[Error: ${error}]`);
-        });
-        
-        cmd.stdout.on('data', (line: string) => {
-          if (isMounted && xtermRef.current) xtermRef.current.write(line);
-        });
-
-        cmd.stderr.on('data', (line: string) => {
-          if (isMounted && xtermRef.current) xtermRef.current.write(`\x1b[31m${line}\x1b[0m`);
-        });
-
-        const child = await cmd.spawn();
-        childRef.current = child;
-
-        term.onData((data) => {
-          if (!childRef.current) return;
-          if (data === '\r') {
-            term.write('\r\n');
-            childRef.current.write(inputBufferRef.current + '\n');
-            inputBufferRef.current = "";
-          } else if (data === '\x7F') {
-            if (inputBufferRef.current.length > 0) {
-              inputBufferRef.current = inputBufferRef.current.slice(0, -1);
-              term.write('\b \b');
+        if (cmdString) {
+          isExecuting = true;
+          try {
+            const shellName = shellType === 'powershell' ? 'powershell' : shellType === 'cmd' ? 'cmd' : 'wsl';
+            
+            // Fix utf-8 issues in powershell by explicitly forcing the console to output UTF8 bytes instead of localized legacy encodings.
+            let fullCommand = cmdString;
+            if (shellType === 'powershell') {
+              fullCommand = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${cmdString}`;
             }
-          } else {
-            inputBufferRef.current += data;
-            term.write(data);
-          }
-        });
 
-        const handleAICommand = (e: any) => {
-          if (isActive && e.detail && e.detail.command) {
-             const cmdString = e.detail.command;
-             // Paste the command directly into the input buffer without executing
-             inputBufferRef.current += cmdString;
-             term.write(cmdString);
+            const args = shellType === 'powershell' ? ['-Command', fullCommand] : ['/C', cmdString];
+            
+            const process = await Command.create(shellName, args).execute();
+            if (process.stdout) {
+              term.write(process.stdout.replace(/\n/g, '\r\n'));
+            }
+            if (process.stderr) {
+              term.write(`\x1b[31m${process.stderr.replace(/\n/g, '\r\n')}\x1b[0m`);
+            }
+          } catch (e: any) {
+             term.write(`\x1b[31mCommand execution failed: ${e}\x1b[0m\r\n`);
+          } finally {
+            isExecuting = false;
+            prompt();
           }
-        };
-
-        window.addEventListener('terminal-execute', handleAICommand);
-        (childRef.current as any)._aiHandler = handleAICommand;
-        
-      } catch (e: any) {
-        if (isMounted) term.writeln(`\r\n[Failed to spawn shell: ${e.message}]`);
+        } else {
+          prompt();
+        }
+      } else if (data === '\x7F') {
+        if (inputBufferRef.current.length > 0) {
+          inputBufferRef.current = inputBufferRef.current.slice(0, -1);
+          term.write('\b \b');
+        }
+      } else {
+        inputBufferRef.current += data;
+        term.write(data);
       }
-    }
+    });
 
-    spawnShell();
+    const handleAICommand = async (e: any) => {
+      if (isActive && e.detail && e.detail.command) {
+         const cmdString = e.detail.command;
+         term.write(cmdString + '\r\n');
+         
+         if (isExecuting) return;
+         isExecuting = true;
+         try {
+            const shellName = shellType === 'powershell' ? 'powershell' : shellType === 'cmd' ? 'cmd' : 'wsl';
+            
+            let fullCommand = cmdString;
+            if (shellType === 'powershell') {
+              fullCommand = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${cmdString}`;
+            }
+
+            const args = shellType === 'powershell' ? ['-Command', fullCommand] : ['/C', cmdString];
+            const process = await Command.create(shellName, args).execute();
+            if (process.stdout) term.write(process.stdout.replace(/\n/g, '\r\n'));
+            if (process.stderr) term.write(`\x1b[31m${process.stderr.replace(/\n/g, '\r\n')}\x1b[0m`);
+         } catch(err) {
+            term.write(`\x1b[31mError: ${err}\x1b[0m\r\n`);
+         } finally {
+            isExecuting = false;
+            prompt();
+         }
+      }
+    };
+
+    window.addEventListener('terminal-execute', handleAICommand);
 
     const resizeObserver = new ResizeObserver(() => {
       if (isActive) {
@@ -225,12 +246,7 @@ function TerminalInstance({ isActive, shellType }: { isActive: boolean, shellTyp
     return () => {
       isMounted = false;
       resizeObserver.disconnect();
-      if (childRef.current) {
-        if ((childRef.current as any)._aiHandler) {
-          window.removeEventListener('terminal-execute', (childRef.current as any)._aiHandler);
-        }
-        childRef.current.kill().catch(() => {});
-      }
+      window.removeEventListener('terminal-execute', handleAICommand);
       term.dispose();
     };
   }, [isActive, shellType]);
