@@ -3,11 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { FileExplorerWidget } from './FileExplorerWidget';
-import ReactGridLayout from 'react-grid-layout';
+import { Responsive as ResponsiveGridLayout } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
-
-const ResponsiveGridLayout = ReactGridLayout.WidthProvider(ReactGridLayout.Responsive);
 
 const DEFAULT_LAYOUT: any[] = [
   { i: 'diagnostics', x: 0, y: 0, w: 3, h: 4 },
@@ -26,6 +24,18 @@ export function JarvisDashboard() {
   const [layouts, setLayouts] = useState<{ [key: string]: any[] }>({ lg: DEFAULT_LAYOUT });
   const [sysMetrics, setSysMetrics] = useState({ cpu_usage: 0, memory_usage: 0 });
   const [weather, setWeather] = useState({ temp: '--', condition: 'Fetching...' });
+  const [width, setWidth] = useState(1200);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      const observer = new ResizeObserver(entries => {
+        setWidth(entries[0].contentRect.width);
+      });
+      observer.observe(containerRef.current);
+      return () => observer.disconnect();
+    }
+  }, []);
 
   useEffect(() => {
     // Fetch rough weather based on IP via Open-Meteo
@@ -59,7 +69,7 @@ export function JarvisDashboard() {
   };
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}>
+    <div ref={containerRef} style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden', position: 'relative' }}>
       
       <ResponsiveGridLayout
         className="layout"
@@ -67,6 +77,7 @@ export function JarvisDashboard() {
         breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
         cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
         rowHeight={80}
+        width={width}
         onLayoutChange={(currentLayout: any, allLayouts: any) => setLayouts(allLayouts)}
         isDraggable={true}
         isResizable={true}
