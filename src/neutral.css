@@ -1,0 +1,15 @@
+/* Paleta Windows neutra: preto, branco e cinza. */
+:root{--accent:#b7b7bd}
+.app-mark{background:linear-gradient(145deg,#d6d6da,#73737a)}
+.window-button.close:hover{background:#4d4d52}
+.online-dot,.composer-toolbar .active,.inline-error,.terminal-state.active,.terminal-error,.agent-icon.blue,.agent-icon.green,.status-dot,.saved-credentials svg{color:#b7b7bd;background-color:#b7b7bd}
+.workflow-node.tool .node-icon,.workflow-node.output .node-icon{color:#b7b7bd}
+.status-badge.running,.status-badge.installed{color:#b7b7bd;background:rgba(183,183,189,.14)}
+.connect-hint{height:25px;display:flex;align-items:center;gap:5px;padding:0 8px;border:1px solid var(--border);border-radius:6px;color:var(--faint);font-size:9px}
+.connect-hint.active{border-color:#b7b7bd;color:var(--text);background:rgba(183,183,189,.1)}
+.canvas-shell.connecting{cursor:crosshair}
+.connections .pending-connection{stroke:#d6d6da;stroke-dasharray:5 5;animation:connection-dash .7s linear infinite}
+.node-port{position:absolute;top:41px;width:12px;height:12px;padding:0;border-radius:50%;background:var(--surface-3);border:2px solid var(--muted);cursor:crosshair;z-index:2}
+.node-port:hover,.node-port.available{border-color:#e7e7eb;background:#a8a8af;box-shadow:0 0 0 3px rgba(183,183,189,.15)}
+.node-input{left:-7px}.node-output{right:-7px;border-color:#b7b7bd}.node-output.active{background:#d6d6da;border-color:#fff;box-shadow:0 0 0 4px rgba(183,183,189,.2)}
+@keyframes connection-dash{to{stroke-dashoffset:-10}}
