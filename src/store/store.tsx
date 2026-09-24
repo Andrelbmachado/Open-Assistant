@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, type ReactNode } from "react";
 import { hasWorkspaceArea, isValidWorkspaceLayout, type ViewKind, type WorkspaceArea, type WorkspaceLayoutNode, type WorkspaceSplit } from "../utils/workspaceLayout";
+import { DEFAULT_ORBITAL_SKIN, isOrbitalSkin, type OrbitalSkin } from "../utils/orbitalState";
 
 export type { ViewKind, WorkspaceArea, WorkspaceLayoutNode, WorkspaceSplit } from "../utils/workspaceLayout";
 
@@ -74,6 +75,7 @@ export interface AppState {
   paletteOpen: boolean;
   theme: Theme;
   accent: string;
+  orbitalSkin: OrbitalSkin;
   activeChatId: string;
   chats: Chat[];
   projects: Project[];
@@ -94,6 +96,7 @@ type Action =
   | { type: "palette"; open: boolean }
   | { type: "theme"; theme: Theme }
   | { type: "accent"; accent: string }
+  | { type: "setOrbitalSkin"; skin: OrbitalSkin }
   | { type: "sendMessage"; text: string }
   | { type: "moveNode"; id: string; x: number; y: number }
   | { type: "connectNodes"; from: string; to: string; fromPort?: number; toPort?: number }
@@ -159,6 +162,7 @@ const initialState: AppState = {
   paletteOpen: false,
   theme: "dark",
   accent: "#b7b7bd",
+  orbitalSkin: DEFAULT_ORBITAL_SKIN,
   activeChatId: "welcome",
   chats: [
     {
@@ -212,6 +216,7 @@ function reducer(state: AppState, action: Action): AppState {
     case "palette": return { ...state, paletteOpen: action.open };
     case "theme": return { ...state, theme: action.theme };
     case "accent": return { ...state, accent: action.accent };
+    case "setOrbitalSkin": return { ...state, orbitalSkin: action.skin };
     case "moveNode": return { ...state, nodes: state.nodes.map((node) => node.id === action.id ? { ...node, x: action.x, y: action.y } : node) };
     case "connectNodes": {
       if (action.from === action.to || state.connections.some((connection) => connection.from === action.from && connection.to === action.to && (connection.fromPort ?? 0) === (action.fromPort ?? 0) && (connection.toPort ?? 0) === (action.toPort ?? 0))) return state;
@@ -320,7 +325,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const layoutIsCurrent = restored.layoutVersion === fallback.layoutVersion
         && isValidWorkspaceLayout(restored.workspaceLayout)
         && hasWorkspaceArea(restored.workspaceLayout, restored.activeAreaId);
-      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, chats: layoutIsCurrent ? (restored.chats ?? fallback.chats) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, paletteOpen: false };
+      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, orbitalSkin: isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, chats: layoutIsCurrent ? (restored.chats ?? fallback.chats) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, paletteOpen: false };
     } catch { return fallback; }
   });
 

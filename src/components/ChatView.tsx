@@ -1,8 +1,12 @@
-import { ArrowUp, AudioLines, Bot, Check, ChevronDown, ChevronRight, Copy, FileText, Folder, Gauge, Image, Mic, Paperclip, RotateCcw, ShieldCheck, Sparkles, Volume2, X } from "lucide-react";
+import { ArrowUp, Atom, AudioLines, Bot, Check, ChevronDown, ChevronRight, CircleDot, Copy, FileText, Folder, Gauge, Image, Mic, Paperclip, RotateCcw, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../store/store";
 import { SpeechController } from "../utils/SpeechController";
 import { askAI, getOllamaModels } from "../utils/aiService";
+import { OrbitalCanvas } from "./OrbitalCanvas";
+import { VoiceActivityMonitor } from "../utils/VoiceActivityMonitor";
+import { activityLabel, nextOrbitalState, shouldProcessVoiceTranscript, type OrbitalSkin, type OrbitalState } from "../utils/orbitalState";
+import { isQAOffline } from "../utils/qaMode";
 
 const speech = new SpeechController();
 type ApprovalMode = "Perguntar" | "Automático" | "Somente leitura";
@@ -19,7 +23,11 @@ export function ChatView() {
   const { state, dispatch } = useStore();
   const [draft, setDraft] = useState("");
   const [listening, setListening] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
   const [voiceError, setVoiceError] = useState("");
+  const [orbitalState, setOrbitalState] = useState<OrbitalState>("idle");
+  const [audioLevel, setAudioLevel] = useState<number | undefined>();
+  const [reducedMotion, setReducedMotion] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [attachmentOpen, setAttachmentOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
@@ -32,6 +40,11 @@ export function ChatView() {
   const [speed, setSpeed] = useState("Padrão");
   const [modelList, setModelList] = useState<string[]>(defaultModels);
   const fileInput = useRef<HTMLInputElement>(null);
+  const voiceMonitor = useRef(new VoiceActivityMonitor());
+  const voiceDraft = useRef("");
+  const voiceRecognitionFailed = useRef(false);
+  const voiceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chat = state.chats.find((item) => item.id === state.activeChatId) ?? state.chats[0];
   const suggestions = useMemo(() => ["Criar um plano de implementação", "Revisar os arquivos do projeto", "Abrir um terminal PowerShell"], []);
   const canSend = Boolean(draft.trim() || attachments.length);
@@ -44,16 +57,70 @@ export function ChatView() {
     });
   }, []);
 
-  async function send() {
-    if (!canSend) return;
+  useEffect(() => {
+    const media = matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReducedMotion(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  function resetOrbitalAfterError(message: string) {
+    setVoiceError(message);
+    setOrbitalState(nextOrbitalState("error"));
+    if (errorTimer.current) clearTimeout(errorTimer.current);
+    errorTimer.current = setTimeout(() => setOrbitalState(nextOrbitalState("reset")), 1800);
+  }
+
+  function stopVoiceSession() {
+    if (voiceTimer.current) clearTimeout(voiceTimer.current);
+    voiceTimer.current = null;
+    speech.stopListening();
+    voiceMonitor.current.stop();
+    setListening(false);
+    setVoiceMode(false);
+    setAudioLevel(undefined);
+    setOrbitalState(nextOrbitalState("reset"));
+  }
+
+  function stopSpeaking() {
+    if (voiceTimer.current) clearTimeout(voiceTimer.current);
+    voiceTimer.current = null;
+    speech.stopSpeaking();
+    setVoiceMode(false);
+    setOrbitalState(nextOrbitalState("speech-end"));
+  }
+
+  function startSpeaking(text: string) {
+    setOrbitalState(nextOrbitalState("speech-start"));
+    if (isQAOffline()) {
+      if (voiceTimer.current) clearTimeout(voiceTimer.current);
+      voiceTimer.current = setTimeout(() => {
+        setVoiceMode(false);
+        setOrbitalState(nextOrbitalState("speech-end"));
+      }, Math.min(3200, Math.max(900, text.length * 18)));
+      return;
+    }
+    speech.speak(text, {
+      onStart: () => setOrbitalState(nextOrbitalState("speech-start")),
+      onBoundary: () => setAudioLevel(undefined),
+      onEnd: () => { setVoiceMode(false); setAudioLevel(undefined); setOrbitalState(nextOrbitalState("speech-end")); },
+      onError: resetOrbitalAfterError,
+    });
+  }
+
+  async function send(options: { text?: string; speakAfter?: boolean } = {}) {
+    const sourceText = options.text ?? draft.trim();
+    if (!sourceText && !attachments.length) return;
     const attachmentText = attachments.length ? `[Anexos: ${attachments.map((file) => file.name).join(", ")}]` : "";
-    const text = [draft.trim(), attachmentText].filter(Boolean).join("\n");
+    const text = [sourceText, attachmentText].filter(Boolean).join("\n");
     const chatId = chat.id;
     const userMsgId = crypto.randomUUID();
     const assistantMsgId = crypto.randomUUID();
 
     dispatch({ type: "addMessage", chatId, message: { id: userMsgId, sender: "user", text, time: "agora" } });
     setDraft(""); setAttachments([]);
+    setOrbitalState(nextOrbitalState("request-start"));
 
     dispatch({
       type: "addMessage",
@@ -73,6 +140,8 @@ export function ChatView() {
         text: reply.text,
         loading: false,
       });
+      if (options.speakAfter) startSpeaking(reply.text);
+      else setOrbitalState(nextOrbitalState("reset"));
     } catch (err) {
       dispatch({
         type: "updateMessage",
@@ -81,14 +150,57 @@ export function ChatView() {
         text: `Erro ao obter resposta da IA: ${err}`,
         loading: false,
       });
+      setVoiceMode(false);
+      resetOrbitalAfterError(`Erro ao obter resposta da IA: ${err}`);
     }
   }
 
   function toggleVoice() {
-    if (listening) { speech.stopListening(); setListening(false); return; }
-    setVoiceError(""); setListening(true);
-    speech.listen(setDraft, () => setListening(false), (error) => { setVoiceError(error); setListening(false); });
+    if (orbitalState === "speaking") { stopSpeaking(); return; }
+    if (listening) { stopVoiceSession(); return; }
+    setVoiceError("");
+    setVoiceMode(true);
+    setListening(true);
+    setOrbitalState(nextOrbitalState("voice-start"));
+    voiceDraft.current = "";
+    voiceRecognitionFailed.current = false;
+    if (isQAOffline()) {
+      voiceTimer.current = setTimeout(() => {
+        setListening(false);
+        send({ text: "Teste de conversa por voz no modo QA offline", speakAfter: true });
+      }, 750);
+      return;
+    }
+    void voiceMonitor.current.start(setAudioLevel);
+    speech.listen((text) => { voiceDraft.current = text; setDraft(text); }, () => {
+      voiceMonitor.current.stop();
+      setAudioLevel(undefined);
+      setListening(false);
+      const transcript = voiceDraft.current.trim();
+      if (shouldProcessVoiceTranscript(voiceRecognitionFailed.current, transcript)) send({ text: transcript, speakAfter: true });
+      else if (!voiceRecognitionFailed.current) { setVoiceMode(false); setOrbitalState(nextOrbitalState("reset")); }
+    }, (error) => {
+      voiceRecognitionFailed.current = true;
+      voiceMonitor.current.stop();
+      setAudioLevel(undefined);
+      setListening(false);
+      setVoiceMode(false);
+      resetOrbitalAfterError(error);
+    });
   }
+
+  useEffect(() => () => { voiceMonitor.current.stop(); if (voiceTimer.current) clearTimeout(voiceTimer.current); if (errorTimer.current) clearTimeout(errorTimer.current); speech.stopSpeaking(); }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && (listening || orbitalState === "speaking")) {
+        event.preventDefault();
+        if (listening) stopVoiceSession(); else stopSpeaking();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [listening, orbitalState]);
 
   function chooseFiles() { fileInput.current?.click(); setAttachmentOpen(false); }
 
@@ -123,10 +235,21 @@ export function ChatView() {
         <div className="message-avatar">{message.sender === "assistant" ? <Bot size={16} /> : "AM"}</div>
         <div className="message-body"><div className="message-meta"><strong>{message.sender === "assistant" ? "Open Assistant" : "Você"}</strong><time>{message.time}</time></div>
           {message.loading ? <div style={{ display: "flex", alignItems: "center", gap: "8px", fontStyle: "italic", opacity: 0.8 }}><Sparkles size={14} className="spin" />Pensando...</div> : renderContent(message.text)}
-          {message.sender === "assistant" && !message.loading && <div className="message-tools"><button onClick={() => navigator.clipboard.writeText(message.text)} title="Copiar"><Copy size={13} /></button><button title="Refazer"><RotateCcw size={13} /></button><button onClick={() => speech.speak(message.text)} title="Ler em voz alta"><Volume2 size={13} /></button></div>}
+          {message.sender === "assistant" && !message.loading && <div className="message-tools"><button onClick={() => navigator.clipboard.writeText(message.text)} title="Copiar"><Copy size={13} /></button><button title="Refazer"><RotateCcw size={13} /></button><button onClick={() => startSpeaking(message.text)} title="Ler em voz alta"><Volume2 size={13} /></button></div>}
         </div>
       </article>)}
     </div>
+    <section className={`chat-orbital-stage ${chat.messages.length > 2 ? "compact" : ""} ${voiceMode ? "voice-mode" : ""}`} aria-label="Estado da conversa por voz">
+      <OrbitalCanvas skin={state.orbitalSkin} state={orbitalState} audioLevel={audioLevel} reducedMotion={reducedMotion} />
+      <p className="orbital-status" aria-live="polite">{activityLabel(orbitalState)}</p>
+      <div className="orbital-skin-picker" role="radiogroup" aria-label="Escolher aparência da orbital">
+        {([
+          ["tentacles", Sparkles, "Tentáculos azuis"],
+          ["sphere", CircleDot, "Esfera azul"],
+          ["atom", Atom, "Átomo"],
+        ] as const).map(([skin, Icon, label]) => <button key={skin} type="button" role="radio" aria-checked={state.orbitalSkin === skin} className={state.orbitalSkin === skin ? "active" : ""} title={label} onClick={() => dispatch({ type: "setOrbitalSkin", skin: skin as OrbitalSkin })}><Icon size={14} /><span className="sr-only">{label}</span></button>)}
+      </div>
+    </section>
     <div className="composer-wrap apple-composer-wrap">
       {voiceError && <div className="inline-error">{voiceError}</div>}
       <div className={`composer apple-composer ${listening ? "listening" : ""}`}>
@@ -162,8 +285,8 @@ export function ChatView() {
           <div className="composer-right-actions">
             <button className="context-usage" title="Janela de contexto" onClick={() => setContextOpen((open) => !open)}><Gauge size={14} /><span>8k</span></button>
             {contextOpen && <div className="composer-popover context-popover"><strong>Janela de contexto</strong><small>1.2k de 8k tokens usados</small><i><b /></i></div>}
-            <button className={listening ? "active" : ""} onClick={toggleVoice} title={listening ? "Parar ditado" : "Ditado"}>{listening ? <X size={16} /> : <Mic size={16} />}</button>
-            <button className="send-button apple-send" onClick={canSend ? send : toggleVoice} title={canSend ? "Enviar" : listening ? "Parar ditado" : "Iniciar conversa por voz"}>{canSend ? <ArrowUp size={17} /> : <AudioLines size={16} />}</button>
+            <button className={listening || orbitalState === "speaking" ? "active" : ""} onClick={toggleVoice} title={listening ? "Parar ditado" : orbitalState === "speaking" ? "Parar fala" : "Ditado"}>{listening || orbitalState === "speaking" ? <Square size={14} /> : <Mic size={16} />}</button>
+            <button className="send-button apple-send" onClick={listening || orbitalState === "speaking" ? toggleVoice : canSend ? () => send() : toggleVoice} title={listening ? "Parar ditado" : orbitalState === "speaking" ? "Parar fala" : canSend ? "Enviar" : "Iniciar conversa por voz"}>{listening || orbitalState === "speaking" ? <Square size={14} /> : canSend ? <ArrowUp size={17} /> : <AudioLines size={16} />}</button>
           </div>
         </div>
         <input ref={fileInput} type="file" multiple hidden onChange={(event) => { setAttachments((files) => [...files, ...Array.from(event.target.files ?? [])]); event.currentTarget.value = ""; }} />

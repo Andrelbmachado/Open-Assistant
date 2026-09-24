@@ -454,3 +454,20 @@
 .voice-wave i:nth-child(2n) { height: 10px; animation-delay: .15s; }
 .voice-wave i:nth-child(3n) { height: 7px; animation-delay: .3s; }
 @keyframes voice-pulse { to { transform: scaleY(.35); opacity: .35; } }
+
+/* Reactive orbital voice stage */
+.chat-orbital-stage { flex: none; min-height: 166px; display: flex; flex-direction: column; align-items: center; justify-content: end; padding: 4px 0 0; position: relative; }
+.chat-orbital-stage.compact { min-height: 112px; }
+.orbital-canvas, .orbital-fallback { width: 122px; height: 122px; display: block; filter: drop-shadow(0 0 16px rgba(38, 155, 255, .19)); }
+.chat-orbital-stage.compact .orbital-canvas, .chat-orbital-stage.compact .orbital-fallback { width: 78px; height: 78px; }
+.orbital-status { margin: -5px 0 7px; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: -.01em; }
+.voice-mode .orbital-status { color: var(--text); }
+.orbital-skin-picker { display: inline-flex; align-items: center; gap: 2px; min-height: 28px; padding: 2px; border: 1px solid var(--border); border-radius: 9px; background: color-mix(in srgb, var(--surface-2) 86%, transparent); box-shadow: 0 5px 16px rgba(0, 0, 0, .13); }
+.orbital-skin-picker button { width: 25px; height: 23px; padding: 0; border: 0; border-radius: 6px; display: grid; place-items: center; background: transparent; color: var(--faint); cursor: pointer; transition: color .16s ease, background .16s ease, transform .16s ease; }
+.orbital-skin-picker button:hover, .orbital-skin-picker button:focus-visible { color: var(--text); background: var(--surface-3); outline: none; transform: translateY(-1px); }
+.orbital-skin-picker button.active { color: #8ad5ff; background: color-mix(in srgb, var(--accent) 18%, var(--surface-3)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent); }
+.orbital-fallback { border-radius: 50%; background: radial-gradient(circle at 38% 31%, #c7efff 0 2%, #1c8aff 22%, #0c276e 67%, #081025 100%); box-shadow: inset -13px -15px 24px rgba(0, 0, 0, .43), 0 0 26px rgba(36, 139, 255, .35); }
+.orbital-fallback.orbital-error { background: radial-gradient(circle at 38% 31%, #ffd1cc 0 2%, #ff655b 28%, #741f32 72%, #211017 100%); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-height: 720px) { .chat-orbital-stage { min-height: 122px; } .orbital-canvas, .orbital-fallback { width: 88px; height: 88px; } }
+@media (prefers-reduced-motion: reduce) { .orbital-skin-picker button { transition: none; } }
