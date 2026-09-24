@@ -23,6 +23,7 @@ export function TitleBar() {
         <button className="icon-button" onClick={() => dispatch({ type: "sidebar" })} aria-label="Alternar barra lateral">
           {state.sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
         </button>
+        <img className="app-orbital-logo" src="/orbital-logo.png" alt="Open Assistant" data-tauri-drag-region />
         {isQAOffline() && <span className="qa-offline-badge">QA offline</span>}
       </div>
       <div className="titlebar-actions">
