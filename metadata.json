@@ -1,0 +1,6 @@
+{
+  "name": "Open Assistant",
+  "description": "Assistente pessoal inteligente para automação, workflows de nós de IA, terminais e análise de design.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
