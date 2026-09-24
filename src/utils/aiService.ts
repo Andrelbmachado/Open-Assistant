@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { createOfflineQAReply, isQAOffline } from "./qaMode";
 
 export interface AIMessage {
   role: "user" | "assistant" | "system";
@@ -11,6 +12,7 @@ export interface AIReply {
 }
 
 export async function getOllamaModels(): Promise<string[]> {
+  if (isQAOffline()) return [];
   try {
     const res = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1500) });
     if (!res.ok) return [];
@@ -23,6 +25,7 @@ export async function getOllamaModels(): Promise<string[]> {
 
 export async function askAI(modelName: string, messages: AIMessage[]): Promise<AIReply> {
   const lastUserMsg = [...messages].reverse().find((m) => m.role === "user")?.content || "";
+  if (isQAOffline()) return createOfflineQAReply(lastUserMsg, modelName);
   const normalizedModel = modelName.toLowerCase();
 
   // 1. Try local Ollama if applicable or if model is set to local

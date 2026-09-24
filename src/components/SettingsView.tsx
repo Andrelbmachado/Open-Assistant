@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl as openExternalUrl } from "@tauri-apps/plugin-opener";
 import { Bot, Check, ChevronRight, Download, Eye, EyeOff, KeyRound, Palette, Play, RefreshCw, Settings2, ShieldCheck, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useStore, type Theme } from "../store/store";
+import { isQAOffline } from "../utils/qaMode";
 
 interface RuntimeStatus { component: "ollama" | "openclaw"; installed: boolean; running: boolean; version?: string; binaryPath?: string; port: number; error?: string }
 const providers = ["OpenAI", "Anthropic", "Together AI", "DeepSeek", "Perplexity", "Fireworks"];
@@ -42,9 +43,17 @@ export function SettingsView() {
     }
   }
 
+  async function openUrl(url: string) {
+    if (isQAOffline()) {
+      setMessage("Modo QA offline: abertura de site bloqueada e registrada como simulação.");
+      return;
+    }
+    await openExternalUrl(url);
+  }
+
   async function saveKey() {
     if (!secret.trim()) return;
-    try { await invoke("save_credential", { account: provider.toLowerCase().replace(" ", "-"), secret }); setSaved((old) => ({ ...old, [provider]: true })); setSecret(""); setMessage("Chave salva com segurança no Windows."); }
+    try { await invoke("save_credential", { account: provider.toLowerCase().replace(" ", "-"), secret }); setSaved((old) => ({ ...old, [provider]: true })); setSecret(""); setMessage(isQAOffline() ? "Credencial fictícia salva apenas na memória QA." : "Chave salva com segurança no Windows."); }
     catch (reason) { setMessage(`Não foi possível salvar: ${reason}`); }
   }
 

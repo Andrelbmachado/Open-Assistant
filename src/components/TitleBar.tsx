@@ -1,6 +1,7 @@
 import { Minus, PanelLeftClose, PanelLeftOpen, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useStore } from "../store/store";
+import { isQAOffline } from "../utils/qaMode";
 
 function handleMinimize() {
   try { getCurrentWindow().minimize().catch(() => undefined); } catch {}
@@ -22,6 +23,7 @@ export function TitleBar() {
         <button className="icon-button" onClick={() => dispatch({ type: "sidebar" })} aria-label="Alternar barra lateral">
           {state.sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
         </button>
+        {isQAOffline() && <span className="qa-offline-badge">QA offline</span>}
       </div>
       <div className="titlebar-actions">
         <span className="window-divider" />

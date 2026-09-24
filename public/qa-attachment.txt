@@ -1,0 +1,2 @@
+Arquivo inofensivo para validar anexos no Open Assistant QA Offline.
+Nenhuma informação pessoal, credencial ou dado de produção está presente aqui.

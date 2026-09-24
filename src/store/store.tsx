@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, type ReactNode } from "react";
+import { hasWorkspaceArea, isValidWorkspaceLayout, type ViewKind, type WorkspaceArea, type WorkspaceLayoutNode, type WorkspaceSplit } from "../utils/workspaceLayout";
 
-export type ViewKind = "chat" | "workflow" | "terminal" | "agents" | "marketplace" | "files" | "browser" | "dashboard";
+export type { ViewKind, WorkspaceArea, WorkspaceLayoutNode, WorkspaceSplit } from "../utils/workspaceLayout";
+
 export type Theme = "dark" | "light" | "system";
 
 export interface ChatMessage {
@@ -58,10 +60,6 @@ export interface Chat {
   messages: ChatMessage[];
   projectId?: string;
 }
-
-export interface WorkspaceArea { id: string; view: ViewKind; }
-export interface WorkspaceSplit { id: string; axis: "horizontal" | "vertical"; fraction: number; first: WorkspaceLayoutNode; second: WorkspaceLayoutNode; }
-export type WorkspaceLayoutNode = WorkspaceArea | WorkspaceSplit;
 
 export interface AppState {
   layoutVersion: number;
@@ -319,7 +317,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const stored = localStorage.getItem("open-assistant-state-v2");
       const restored = stored ? JSON.parse(stored) : null;
       if (!restored) return fallback;
-      const layoutIsCurrent = restored.layoutVersion === fallback.layoutVersion;
+      const layoutIsCurrent = restored.layoutVersion === fallback.layoutVersion
+        && isValidWorkspaceLayout(restored.workspaceLayout)
+        && hasWorkspaceArea(restored.workspaceLayout, restored.activeAreaId);
       return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, chats: layoutIsCurrent ? (restored.chats ?? fallback.chats) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, paletteOpen: false };
     } catch { return fallback; }
   });

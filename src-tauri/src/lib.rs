@@ -20,6 +20,11 @@ struct TerminalSession {
 #[derive(Default)]
 struct AppState {
     terminals: Mutex<HashMap<String, TerminalSession>>,
+    qa_credentials: Mutex<HashMap<String, String>>,
+}
+
+fn is_qa_app(app: &AppHandle) -> bool {
+    app.config().identifier == "com.openassistant.windows.qa"
 }
 
 #[derive(Clone, Serialize)]
@@ -84,6 +89,10 @@ fn emit_reader<R: std::io::Read + Send + 'static>(
     });
 }
 
+fn qa_terminal_output(input: &str) -> String {
+    format!("[QA offline] Comando simulado: {}\r\n", input.trim())
+}
+
 #[tauri::command]
 fn spawn_terminal_session(
     app: AppHandle,
@@ -91,6 +100,18 @@ fn spawn_terminal_session(
     session_id: String,
     shell: Option<String>,
 ) -> Result<String, String> {
+    if is_qa_app(&app) {
+        app.emit(
+            "terminal-output",
+            TerminalOutput {
+                session_id: session_id.clone(),
+                data: "Open Assistant Terminal · QA Offline\r\n".to_string(),
+                stream: "stdout".to_string(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(session_id);
+    }
     let requested = shell.unwrap_or_else(|| "powershell".into()).to_lowercase();
     let (program, args): (&str, &[&str]) = if requested == "cmd" {
         ("cmd.exe", &["/Q", "/D", "/K", "chcp 65001>nul"])
@@ -136,10 +157,23 @@ fn spawn_terminal_session(
 
 #[tauri::command]
 fn write_terminal_session(
+    app: AppHandle,
     state: State<AppState>,
     session_id: String,
     input: String,
 ) -> Result<(), String> {
+    if is_qa_app(&app) {
+        app.emit(
+            "terminal-output",
+            TerminalOutput {
+                session_id,
+                data: qa_terminal_output(&input),
+                stream: "stdout".to_string(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     let mut terminals = state
         .terminals
         .lock()
@@ -171,7 +205,20 @@ fn terminate_terminal_session(state: State<AppState>, session_id: String) -> Res
 }
 
 #[tauri::command]
-fn save_credential(account: String, secret: String) -> Result<(), String> {
+fn save_credential(
+    app: AppHandle,
+    state: State<AppState>,
+    account: String,
+    secret: String,
+) -> Result<(), String> {
+    if is_qa_app(&app) {
+        state
+            .qa_credentials
+            .lock()
+            .map_err(|_| "estado QA de credenciais indisponível".to_string())?
+            .insert(account, secret);
+        return Ok(());
+    }
     keyring::Entry::new(CREDENTIAL_SERVICE, &account)
         .map_err(|error| error.to_string())?
         .set_password(&secret)
@@ -179,7 +226,18 @@ fn save_credential(account: String, secret: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn read_credential(account: String) -> Result<Option<String>, String> {
+fn read_credential(
+    app: AppHandle,
+    state: State<AppState>,
+    account: String,
+) -> Result<Option<String>, String> {
+    if is_qa_app(&app) {
+        return state
+            .qa_credentials
+            .lock()
+            .map_err(|_| "estado QA de credenciais indisponível".to_string())
+            .map(|credentials| credentials.get(&account).cloned());
+    }
     let entry =
         keyring::Entry::new(CREDENTIAL_SERVICE, &account).map_err(|error| error.to_string())?;
     match entry.get_password() {
@@ -190,7 +248,19 @@ fn read_credential(account: String) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn delete_credential(account: String) -> Result<(), String> {
+fn delete_credential(
+    app: AppHandle,
+    state: State<AppState>,
+    account: String,
+) -> Result<(), String> {
+    if is_qa_app(&app) {
+        state
+            .qa_credentials
+            .lock()
+            .map_err(|_| "estado QA de credenciais indisponível".to_string())?
+            .remove(&account);
+        return Ok(());
+    }
     let entry =
         keyring::Entry::new(CREDENTIAL_SERVICE, &account).map_err(|error| error.to_string())?;
     match entry.delete_credential() {
@@ -260,8 +330,34 @@ fn check_runtime(component: &str, executable: &str, port: u16) -> RuntimeStatus 
     }
 }
 
+fn qa_runtime_statuses() -> Vec<RuntimeStatus> {
+    vec![
+        RuntimeStatus {
+            component: "ollama".to_string(),
+            installed: true,
+            running: false,
+            version: Some("QA simulado".to_string()),
+            binary_path: Some("Modo QA offline".to_string()),
+            port: 11434,
+            error: None,
+        },
+        RuntimeStatus {
+            component: "openclaw".to_string(),
+            installed: true,
+            running: false,
+            version: Some("QA simulado".to_string()),
+            binary_path: Some("Modo QA offline".to_string()),
+            port: 18789,
+            error: None,
+        },
+    ]
+}
+
 #[tauri::command]
-fn check_local_runtime_status() -> Vec<RuntimeStatus> {
+fn check_local_runtime_status(app: AppHandle) -> Vec<RuntimeStatus> {
+    if is_qa_app(&app) {
+        return qa_runtime_statuses();
+    }
     vec![
         check_runtime("ollama", "ollama.exe", 11434),
         check_runtime("openclaw", "openclaw.exe", 18789),
@@ -269,7 +365,10 @@ fn check_local_runtime_status() -> Vec<RuntimeStatus> {
 }
 
 #[tauri::command]
-fn start_runtime(component: String) -> Result<String, String> {
+fn start_runtime(app: AppHandle, component: String) -> Result<String, String> {
+    if is_qa_app(&app) {
+        return Ok(format!("{component} iniciado em modo QA simulado"));
+    }
     let executable = match component.to_lowercase().as_str() {
         "ollama" => "ollama.exe",
         "openclaw" => "openclaw.exe",
@@ -364,5 +463,26 @@ mod tests {
             .expect("Windows command shell should be available");
 
         assert_eq!(output, "terminal-ok");
+    }
+
+    #[test]
+    fn qa_runtime_statuses_are_safe_simulations() {
+        let statuses = qa_runtime_statuses();
+
+        assert_eq!(statuses.len(), 2);
+        assert!(statuses
+            .iter()
+            .all(|status| status.installed && !status.running));
+        assert!(statuses
+            .iter()
+            .all(|status| status.version.as_deref() == Some("QA simulado")));
+    }
+
+    #[test]
+    fn qa_terminal_output_never_executes_the_requested_command() {
+        assert_eq!(
+            qa_terminal_output("Get-Location"),
+            "[QA offline] Comando simulado: Get-Location\r\n"
+        );
     }
 }

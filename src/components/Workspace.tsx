@@ -1,6 +1,7 @@
 import { Activity, Bot, Boxes, Check, ChevronDown, Copy, Cpu, FileCode, FileText, FolderOpen, MessageSquare, MoreHorizontal, Plus, ShoppingBag, TerminalSquare, Workflow } from "lucide-react";
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { useStore, type ViewKind, type WorkspaceArea, type WorkspaceLayoutNode, type WorkspaceSplit } from "../store/store";
+import { calculateSplitIntent, type Corner } from "../utils/workspaceLayout";
 import { ChatView } from "./ChatView";
 import { TerminalView } from "./TerminalView";
 import { WorkflowCanvas } from "./WorkflowCanvas";
@@ -126,39 +127,38 @@ function ViewRenderer({ kind }: { kind: ViewKind }) {
   return <section className="view placeholder-view"><span><FolderOpen size={28} /></span><h2>{labels[kind]}</h2><p>Esta área está pronta para receber conteúdo.</p></section>;
 }
 
-type Corner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
-interface SplitDrag { corner: Corner; startX: number; startY: number; deltaX: number; deltaY: number; }
-
-function splitIntent(drag: SplitDrag, width: number, height: number) {
-  const leading = drag.corner.endsWith("left");
-  const top = drag.corner.startsWith("top");
-  const horizontal = leading ? Math.max(drag.deltaX, 0) : Math.max(-drag.deltaX, 0);
-  const vertical = top ? Math.max(drag.deltaY, 0) : Math.max(-drag.deltaY, 0);
-  if (Math.max(horizontal, vertical) < 24) return null;
-  if (horizontal >= vertical) {
-    if (width < 120) return null;
-    const minimum = Math.min(.45, 50 / Math.max(width, 1));
-    const share = Math.min(1 - minimum, Math.max(minimum, horizontal / Math.max(width, 1)));
-    return { axis: "horizontal" as const, fraction: leading ? share : 1 - share, newAreaFirst: leading };
-  }
-  if (height < 120) return null;
-  const minimum = Math.min(.45, 50 / Math.max(height, 1));
-  const share = Math.min(1 - minimum, Math.max(minimum, vertical / Math.max(height, 1)));
-  return { axis: "vertical" as const, fraction: top ? share : 1 - share, newAreaFirst: top };
-}
+interface SplitDrag { corner: Corner; pointerId: number; startX: number; startY: number; deltaX: number; deltaY: number; }
 
 function AreaShell({ area }: { area: WorkspaceArea }) {
   const { state, dispatch } = useStore();
   const root = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<SplitDrag | null>(null);
-  const intent = drag && root.current ? splitIntent(drag, root.current.clientWidth, root.current.clientHeight) : null;
+  const dragRef = useRef<SplitDrag | null>(null);
+  const intent = drag && root.current ? calculateSplitIntent(drag.corner, drag.deltaX, drag.deltaY, root.current.clientWidth, root.current.clientHeight) : null;
   const corners: Corner[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
+  const clearDrag = () => { dragRef.current = null; setDrag(null); };
+  const updateDrag = (event: PointerEvent<HTMLDivElement>) => {
+    const current = dragRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    const next = { ...current, deltaX: event.clientX - current.startX, deltaY: event.clientY - current.startY };
+    dragRef.current = next;
+    setDrag(next);
+  };
+  const finishDrag = (event: PointerEvent<HTMLDivElement>) => {
+    const current = dragRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    const rect = root.current?.getBoundingClientRect();
+    const finalIntent = rect ? calculateSplitIntent(current.corner, event.clientX - current.startX, event.clientY - current.startY, rect.width, rect.height) : null;
+    if (finalIntent) dispatch({ type: "splitArea", id: area.id, ...finalIntent });
+    if (root.current?.hasPointerCapture(event.pointerId)) root.current.releasePointerCapture(event.pointerId);
+    clearDrag();
+  };
 
-  return <div className={`area-shell ${state.activeAreaId === area.id ? "active" : ""}`} ref={root} onPointerDown={() => dispatch({ type: "activateArea", id: area.id })} onPointerMove={(event) => { if (drag) setDrag({ ...drag, deltaX: event.clientX - drag.startX, deltaY: event.clientY - drag.startY }); }} onPointerUp={() => { if (intent) dispatch({ type: "splitArea", id: area.id, ...intent }); setDrag(null); }}>
+  return <div className={`area-shell ${state.activeAreaId === area.id ? "active" : ""}`} ref={root} onPointerDown={() => dispatch({ type: "activateArea", id: area.id })} onPointerMove={updateDrag} onPointerUp={finishDrag} onPointerCancel={clearDrag} onLostPointerCapture={clearDrag}>
     <ViewRenderer kind={area.view} />
     <div className="area-controls"><MessageSquare size={13} /><select value={area.view} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => { dispatch({ type: "activateArea", id: area.id }); dispatch({ type: "view", view: event.target.value as ViewKind }); }}>{areaViews.map((view) => <option key={view} value={view}>{labels[view]}</option>)}</select><ChevronDown size={12} /></div>
     {intent && <div className={`area-split-preview ${intent.axis} ${intent.newAreaFirst ? "first" : "second"}`} style={intent.axis === "horizontal" ? { width: `${(intent.newAreaFirst ? intent.fraction : 1 - intent.fraction) * 100}%` } : { height: `${(intent.newAreaFirst ? intent.fraction : 1 - intent.fraction) * 100}%` }} />}
-    {corners.map((corner) => <button key={corner} className={`area-corner ${corner}`} aria-label="Arraste para criar uma nova área" onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setDrag({ corner, startX: event.clientX, startY: event.clientY, deltaX: 0, deltaY: 0 }); }} />)}
+    {corners.map((corner) => <button key={corner} className={`area-corner ${corner}`} aria-label="Arraste para criar uma nova área" onPointerDown={(event) => { event.stopPropagation(); const next = { corner, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, deltaX: 0, deltaY: 0 }; root.current?.setPointerCapture(event.pointerId); dragRef.current = next; setDrag(next); dispatch({ type: "activateArea", id: area.id }); }} />)}
   </div>;
 }
 
@@ -171,7 +171,8 @@ function SplitNode({ split }: { split: WorkspaceSplit }) {
   const selectCollapseSide = (side: "first" | "second" | null) => { collapseSideRef.current = side; setCollapseSide(side); };
   const update = (event: PointerEvent<HTMLDivElement>) => { if (!dragging.current || !container.current) return; const rect = container.current.getBoundingClientRect(); const total = split.axis === "horizontal" ? rect.width : rect.height; const value = split.axis === "horizontal" ? (event.clientX - rect.left) / rect.width : (event.clientY - rect.top) / rect.height; const firstSize = value * total; const secondSize = (1 - value) * total; selectCollapseSide(firstSize < 50 ? "first" : secondSize < 50 ? "second" : null); dispatch({ type: "updateWorkspaceSplit", id: split.id, fraction: value }); };
   const endDrag = () => { if (!dragging.current) return; dragging.current = false; if (collapseSideRef.current === "first") dispatch({ type: "collapseWorkspaceSplit", id: split.id, keep: "second" }); else if (collapseSideRef.current === "second") dispatch({ type: "collapseWorkspaceSplit", id: split.id, keep: "first" }); selectCollapseSide(null); };
-  return <div ref={container} className={`workspace-split-node ${split.axis}`} onPointerMove={update} onPointerUp={endDrag} onPointerLeave={() => { if (!dragging.current) setCollapseSide(null); }}>
+  const cancelDrag = () => { dragging.current = false; selectCollapseSide(null); };
+  return <div ref={container} className={`workspace-split-node ${split.axis}`} onPointerMove={update} onPointerUp={endDrag} onPointerCancel={cancelDrag} onLostPointerCapture={cancelDrag} onPointerLeave={() => { if (!dragging.current) setCollapseSide(null); }}>
     <div className={`split-child ${collapseSide === "first" ? "collapse-target" : ""}`} style={{ flexBasis: `max(0px, calc(${split.fraction * 100}% - 5px))` }}><WorkspaceNode node={split.first} /></div>
     <div className="blender-divider" title="Reduza uma área abaixo de 50 px para fechá-la" onPointerDown={(event) => { dragging.current = true; collapseSideRef.current = null; event.currentTarget.setPointerCapture(event.pointerId); }}><i /></div>
     <div className={`split-child ${collapseSide === "second" ? "collapse-target" : ""}`} style={{ flexBasis: `max(0px, calc(${(1 - split.fraction) * 100}% - 5px))` }}><WorkspaceNode node={split.second} /></div>
