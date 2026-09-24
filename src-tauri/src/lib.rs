@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
+    env,
     io::Write,
     net::{SocketAddr, TcpStream},
     process::{Child, ChildStdin, Command, Stdio},
@@ -21,6 +22,7 @@ struct TerminalSession {
 struct AppState {
     terminals: Mutex<HashMap<String, TerminalSession>>,
     qa_credentials: Mutex<HashMap<String, String>>,
+    local_model_operations: Mutex<HashMap<String, u32>>,
 }
 
 fn is_qa_app(app: &AppHandle) -> bool {
@@ -46,6 +48,93 @@ struct RuntimeStatus {
     port: u16,
     error: Option<String>,
 }
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GpuProfile {
+    name: String,
+    vram_mb: u64,
+    driver_version: Option<String>,
+    vendor: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HardwareProfile {
+    gpus: Vec<GpuProfile>,
+    cpu_name: String,
+    ram_mb: u64,
+    available_disk_mb: u64,
+    warnings: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelRecommendation {
+    eligible: bool,
+    model_id: Option<String>,
+    model_name: Option<String>,
+    download_size_mb: Option<u64>,
+    minimum_vram_mb: Option<u64>,
+    minimum_ram_mb: Option<u64>,
+    minimum_disk_mb: Option<u64>,
+    reason: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalModelOperation {
+    id: String,
+    kind: String,
+    state: String,
+    message: String,
+    model_id: Option<String>,
+    progress_percent: Option<u8>,
+}
+
+struct ModelProfile {
+    model_id: &'static str,
+    model_name: &'static str,
+    download_size_mb: u64,
+    minimum_vram_mb: u64,
+    minimum_ram_mb: u64,
+    minimum_disk_mb: u64,
+}
+
+const QWEN35_PROFILES: [ModelProfile; 4] = [
+    ModelProfile {
+        model_id: "qwen3.5:9b",
+        model_name: "Qwen3.5 9B",
+        download_size_mb: 6_600,
+        minimum_vram_mb: 10_240,
+        minimum_ram_mb: 16_384,
+        minimum_disk_mb: 10_240,
+    },
+    ModelProfile {
+        model_id: "qwen3.5:4b",
+        model_name: "Qwen3.5 4B",
+        download_size_mb: 3_400,
+        minimum_vram_mb: 6_144,
+        minimum_ram_mb: 12_288,
+        minimum_disk_mb: 6_144,
+    },
+    ModelProfile {
+        model_id: "qwen3.5:2b",
+        model_name: "Qwen3.5 2B",
+        download_size_mb: 2_700,
+        minimum_vram_mb: 4_096,
+        minimum_ram_mb: 8_192,
+        minimum_disk_mb: 5_120,
+    },
+    ModelProfile {
+        model_id: "qwen3.5:0.8b",
+        model_name: "Qwen3.5 0.8B",
+        download_size_mb: 1_000,
+        minimum_vram_mb: 3_072,
+        minimum_ram_mb: 8_192,
+        minimum_disk_mb: 3_072,
+    },
+];
 
 fn emit_reader<R: std::io::Read + Send + 'static>(
     app: AppHandle,
@@ -284,6 +373,399 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn parse_pull_progress(line: &str) -> Option<u8> {
+    line.split_whitespace()
+        .find_map(|word| word.strip_suffix('%')?.parse::<u8>().ok())
+}
+
+fn emit_local_model_operation(app: &AppHandle, operation: LocalModelOperation) {
+    let _ = app.emit("local-model-operation", operation);
+}
+
+fn start_local_operation(
+    app: AppHandle,
+    state: State<AppState>,
+    kind: &str,
+    model_id: Option<String>,
+    program: &str,
+    args: &[&str],
+) -> Result<String, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .creation_flags(0x08000000)
+        .spawn()
+        .map_err(|error| format!("Não foi possível iniciar {program}: {error}"))?;
+    let pid = child.id();
+    state
+        .local_model_operations
+        .lock()
+        .map_err(|_| "estado de operações locais indisponível")?
+        .insert(id.clone(), pid);
+    let operation_kind = kind.to_string();
+    let emitted_model = model_id.clone();
+    let worker_id = id.clone();
+    emit_local_model_operation(
+        &app,
+        LocalModelOperation {
+            id: id.clone(),
+            kind: operation_kind.clone(),
+            state: "running".into(),
+            message: "Operação local iniciada.".into(),
+            model_id: model_id.clone(),
+            progress_percent: Some(0),
+        },
+    );
+    std::thread::spawn(move || {
+        let output = child.wait_with_output();
+        let active = app
+            .state::<AppState>()
+            .local_model_operations
+            .lock()
+            .ok()
+            .and_then(|mut operations| operations.remove(&worker_id))
+            .is_some();
+        if !active {
+            return;
+        }
+        match output {
+            Ok(output) if output.status.success() => {
+                let message = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let progress_percent = parse_pull_progress(&message).or(Some(100));
+                emit_local_model_operation(
+                    &app,
+                    LocalModelOperation {
+                        id: worker_id,
+                        kind: operation_kind,
+                        state: "completed".into(),
+                        message,
+                        model_id: emitted_model,
+                        progress_percent,
+                    },
+                );
+            }
+            Ok(output) => emit_local_model_operation(
+                &app,
+                LocalModelOperation {
+                    id: worker_id,
+                    kind: operation_kind,
+                    state: "failed".into(),
+                    message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                    model_id: emitted_model,
+                    progress_percent: None,
+                },
+            ),
+            Err(error) => emit_local_model_operation(
+                &app,
+                LocalModelOperation {
+                    id: worker_id,
+                    kind: operation_kind,
+                    state: "failed".into(),
+                    message: error.to_string(),
+                    model_id: emitted_model,
+                    progress_percent: None,
+                },
+            ),
+        }
+    });
+    Ok(id)
+}
+
+fn qa_local_operation(app: &AppHandle, kind: &str, model_id: Option<String>) -> String {
+    let id = uuid::Uuid::new_v4().to_string();
+    emit_local_model_operation(
+        app,
+        LocalModelOperation {
+            id: id.clone(),
+            kind: kind.to_string(),
+            state: "completed".into(),
+            message: "Modo QA offline: operação simulada, sem processo ou rede.".into(),
+            model_id,
+            progress_percent: Some(100),
+        },
+    );
+    id
+}
+
+#[tauri::command]
+fn install_ollama(app: AppHandle, state: State<AppState>) -> Result<String, String> {
+    if is_qa_app(&app) {
+        return Ok(qa_local_operation(&app, "install_runtime", None));
+    }
+    start_local_operation(
+        app,
+        state,
+        "install_runtime",
+        None,
+        "winget.exe",
+        &[
+            "install",
+            "--id",
+            "Ollama.Ollama",
+            "--exact",
+            "--source",
+            "winget",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+            "--disable-interactivity",
+        ],
+    )
+}
+
+#[tauri::command]
+fn download_recommended_model(
+    app: AppHandle,
+    state: State<AppState>,
+    model_id: String,
+) -> Result<String, String> {
+    if is_qa_app(&app) {
+        return Ok(qa_local_operation(&app, "download_model", Some(model_id)));
+    }
+    let recommendation = recommend_local_model(&scan_local_hardware());
+    if !recommendation.eligible || recommendation.model_id.as_deref() != Some(model_id.as_str()) {
+        return Err(
+            "O modelo solicitado não corresponde à recomendação atual deste computador."
+                .to_string(),
+        );
+    }
+    let ollama = find_binary("ollama.exe")
+        .ok_or("Ollama não encontrado. Instale-o antes de baixar o modelo.")?;
+    start_local_operation(
+        app,
+        state,
+        "download_model",
+        Some(model_id.clone()),
+        &ollama,
+        &["pull", &model_id],
+    )
+}
+
+#[tauri::command]
+fn cancel_local_model_operation(
+    app: AppHandle,
+    state: State<AppState>,
+    operation_id: String,
+) -> Result<(), String> {
+    if is_qa_app(&app) {
+        return Ok(());
+    }
+    let pid = state
+        .local_model_operations
+        .lock()
+        .map_err(|_| "estado de operações locais indisponível")?
+        .remove(&operation_id)
+        .ok_or("operação local não encontrada")?;
+    let _ = Command::new("taskkill.exe")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(0x08000000)
+        .output();
+    emit_local_model_operation(
+        &app,
+        LocalModelOperation {
+            id: operation_id,
+            kind: "unknown".into(),
+            state: "cancelled".into(),
+            message: "Operação cancelada pelo usuário.".into(),
+            model_id: None,
+            progress_percent: None,
+        },
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn get_local_models(app: AppHandle) -> Vec<String> {
+    if is_qa_app(&app) {
+        return vec!["qwen3.5:9b".to_string()];
+    }
+    command_output("ollama.exe", &["list"])
+        .map(|output| {
+            output
+                .lines()
+                .skip(1)
+                .filter_map(|line| line.split_whitespace().next().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn mib_from_bytes(value: &str) -> Option<u64> {
+    value
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|bytes| bytes / 1_048_576)
+}
+
+fn scan_local_hardware() -> HardwareProfile {
+    let mut warnings = Vec::new();
+    let gpus: Vec<GpuProfile> = command_output(
+        "nvidia-smi.exe",
+        &[
+            "--query-gpu=name,memory.total,driver_version",
+            "--format=csv,noheader,nounits",
+        ],
+    )
+    .map(|output| {
+        output
+            .lines()
+            .filter_map(|line| {
+                let values: Vec<_> = line.split(',').map(str::trim).collect();
+                Some(GpuProfile {
+                    name: values.first()?.to_string(),
+                    vram_mb: values.get(1)?.parse().ok()?,
+                    driver_version: values.get(2).map(|value| value.to_string()),
+                    vendor: "nvidia".to_string(),
+                })
+            })
+            .collect()
+    })
+    .unwrap_or_default();
+    if gpus.is_empty() {
+        warnings.push("Nenhuma GPU NVIDIA foi detectada pelo nvidia-smi.".to_string());
+    }
+
+    let cpu_name = command_output("powershell.exe", &["-NoProfile", "-Command", "(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name).Trim()"]).unwrap_or_else(|| "CPU não identificada".to_string());
+    let ram_mb = command_output(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-Command",
+            "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory",
+        ],
+    )
+    .and_then(|value| mib_from_bytes(&value))
+    .unwrap_or_else(|| {
+        warnings.push("Não foi possível identificar a memória RAM.".to_string());
+        0
+    });
+    let system_drive = env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+    let drive_name = system_drive.trim_end_matches(':');
+    let disk_command = format!("(Get-PSDrive -Name {drive_name}).Free");
+    let available_disk_mb =
+        command_output("powershell.exe", &["-NoProfile", "-Command", &disk_command])
+            .and_then(|value| mib_from_bytes(&value))
+            .unwrap_or_else(|| {
+                warnings.push("Não foi possível identificar o espaço livre em disco.".to_string());
+                0
+            });
+
+    HardwareProfile {
+        gpus,
+        cpu_name,
+        ram_mb,
+        available_disk_mb,
+        warnings,
+    }
+}
+
+fn qa_hardware_profile() -> HardwareProfile {
+    HardwareProfile {
+        gpus: vec![GpuProfile {
+            name: "NVIDIA GeForce RTX 5070 (QA simulada)".to_string(),
+            vram_mb: 12_288,
+            driver_version: Some("QA simulado".to_string()),
+            vendor: "nvidia".to_string(),
+        }],
+        cpu_name: "CPU QA simulada".to_string(),
+        ram_mb: 32_768,
+        available_disk_mb: 102_400,
+        warnings: vec!["Modo QA offline: inventário de hardware simulado.".to_string()],
+    }
+}
+
+fn recommendation_unavailable(reason: String) -> ModelRecommendation {
+    ModelRecommendation {
+        eligible: false,
+        model_id: None,
+        model_name: None,
+        download_size_mb: None,
+        minimum_vram_mb: None,
+        minimum_ram_mb: None,
+        minimum_disk_mb: None,
+        reason,
+    }
+}
+
+fn recommend_local_model(hardware: &HardwareProfile) -> ModelRecommendation {
+    let nvidia_gpu = hardware
+        .gpus
+        .iter()
+        .filter(|gpu| gpu.vendor == "nvidia")
+        .max_by_key(|gpu| gpu.vram_mb);
+    let Some(gpu) = nvidia_gpu else {
+        return recommendation_unavailable(
+            "Nenhuma GPU NVIDIA compatível foi detectada.".to_string(),
+        );
+    };
+    let profile = QWEN35_PROFILES.iter().find(|profile| {
+        gpu.vram_mb >= profile.minimum_vram_mb
+            && hardware.ram_mb >= profile.minimum_ram_mb
+            && hardware.available_disk_mb >= profile.minimum_disk_mb
+    });
+    let Some(profile) = profile else {
+        if gpu.vram_mb
+            < QWEN35_PROFILES
+                .last()
+                .expect("profiles configured")
+                .minimum_vram_mb
+        {
+            return recommendation_unavailable(
+                "A GPU detectada não possui VRAM suficiente para um modelo local equilibrado."
+                    .to_string(),
+            );
+        }
+        if hardware.ram_mb
+            < QWEN35_PROFILES
+                .last()
+                .expect("profiles configured")
+                .minimum_ram_mb
+        {
+            return recommendation_unavailable(
+                "A memória RAM disponível não atende ao mínimo para o modelo local.".to_string(),
+            );
+        }
+        return recommendation_unavailable(
+            "O disco não possui espaço livre suficiente para baixar e preparar o modelo."
+                .to_string(),
+        );
+    };
+    ModelRecommendation {
+        eligible: true,
+        model_id: Some(profile.model_id.to_string()),
+        model_name: Some(profile.model_name.to_string()),
+        download_size_mb: Some(profile.download_size_mb),
+        minimum_vram_mb: Some(profile.minimum_vram_mb),
+        minimum_ram_mb: Some(profile.minimum_ram_mb),
+        minimum_disk_mb: Some(profile.minimum_disk_mb),
+        reason: format!(
+            "{} equilibra qualidade, VRAM disponível e memória do sistema.",
+            profile.model_name
+        ),
+    }
+}
+
+#[tauri::command]
+fn scan_hardware(app: AppHandle) -> HardwareProfile {
+    if is_qa_app(&app) {
+        qa_hardware_profile()
+    } else {
+        scan_local_hardware()
+    }
+}
+
+#[tauri::command]
+fn get_local_model_recommendation(app: AppHandle) -> ModelRecommendation {
+    let hardware = if is_qa_app(&app) {
+        qa_hardware_profile()
+    } else {
+        scan_local_hardware()
+    };
+    recommend_local_model(&hardware)
+}
+
 fn find_binary(executable: &str) -> Option<String> {
     if let Some(path) = command_output("where.exe", &[executable])
         .and_then(|value| value.lines().next().map(str::to_string))
@@ -417,6 +899,12 @@ pub fn run() {
             delete_credential,
             check_local_runtime_status,
             start_runtime,
+            scan_hardware,
+            get_local_model_recommendation,
+            install_ollama,
+            download_recommended_model,
+            cancel_local_model_operation,
+            get_local_models,
             app_ready
         ])
         .run(tauri::generate_context!())
@@ -484,5 +972,54 @@ mod tests {
             qa_terminal_output("Get-Location"),
             "[QA offline] Comando simulado: Get-Location\r\n"
         );
+    }
+
+    #[test]
+    fn recommendation_selects_qwen_35_9b_for_12gb_nvidia_gpu() {
+        let hardware = HardwareProfile {
+            gpus: vec![GpuProfile {
+                name: "NVIDIA GeForce RTX 5070".into(),
+                vram_mb: 12_288,
+                driver_version: Some("576.02".into()),
+                vendor: "nvidia".into(),
+            }],
+            cpu_name: "AMD Ryzen 7".into(),
+            ram_mb: 32_768,
+            available_disk_mb: 102_400,
+            warnings: vec![],
+        };
+
+        let recommendation = recommend_local_model(&hardware);
+
+        assert!(recommendation.eligible);
+        assert_eq!(recommendation.model_id.as_deref(), Some("qwen3.5:9b"));
+        assert_eq!(recommendation.download_size_mb, Some(6_600));
+    }
+
+    #[test]
+    fn recommendation_blocks_non_nvidia_hardware() {
+        let hardware = HardwareProfile {
+            gpus: vec![GpuProfile {
+                name: "Adaptador básico".into(),
+                vram_mb: 4_096,
+                driver_version: None,
+                vendor: "other".into(),
+            }],
+            cpu_name: "Intel".into(),
+            ram_mb: 16_384,
+            available_disk_mb: 100_000,
+            warnings: vec![],
+        };
+
+        let recommendation = recommend_local_model(&hardware);
+
+        assert!(!recommendation.eligible);
+        assert!(recommendation.reason.contains("NVIDIA"));
+    }
+
+    #[test]
+    fn pull_progress_parser_extracts_a_percent_from_ollama_output() {
+        assert_eq!(parse_pull_progress("pulling manifest  42%"), Some(42));
+        assert_eq!(parse_pull_progress("verifying sha256 digest"), None);
     }
 }
