@@ -1,14 +1,18 @@
-import { ArrowUp, AudioLines, Ban, Bot, Check, ChevronRight, KeyRound, Cloud, CircleAlert, CircleCheck, CircleX, Copy, Cpu, Download, FileText, Folder, Image, LoaderCircle, Mic, MousePointer2, Play, Plus, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
+import { ArrowUp, AtSign, AudioLines, Ban, Bot, Brain, Check, ChevronRight, KeyRound, Cloud, CircleAlert, CircleCheck, CircleX, Copy, Cpu, Download, FileText, Folder, Image, LoaderCircle, Mic, MousePointer2, Play, Plus, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useStore } from "../store/store";
+import { useStore, type ActionCandidate, type ChatMessage, type Invocation } from "../store/store";
 import { refreshInstalledModels, scanHardware, startOllama, useLocalModels } from "../store/localModelsStore";
 import { SpeechController, transcribe } from "../utils/SpeechController";
 import { refreshTools, useTools } from "../store/toolsStore";
 import { resolveAsrModel, resolveTtsVoice } from "../utils/toolCatalog";
 import { VoiceCapture, type CaptureResult } from "../utils/voiceCapture";
-import { runAgent, type AccessMode, type AgentStep } from "../utils/agentRunner";
+import { matchAction, runAgent, runCatalogAction, warmAgent, type AccessMode, type AgentResult, type AgentStep } from "../utils/agentRunner";
 import { invoke } from "@tauri-apps/api/core";
-import { allCloudProviders, CLOUD_PRODUCT_NAMES, cloudModelValue } from "../utils/cloudModels";
+import { allCloudProviders, CLOUD_PRODUCT_NAMES, cloudModelValue, providerModels } from "../utils/cloudModels";
+import { applyDetected, detectMemory, memoryPrompt } from "../utils/memory";
+import { looksLikePcAction } from "../utils/pcIntent";
+import { findMention } from "../utils/composerMentions";
+import type { ProviderConfig } from "../utils/providers";
 import { cleanModelTitle, titlePrompt } from "../utils/chatTitle";
 import { askAI, cancelAI, NO_LOCAL_MODEL_ERROR, ollamaModelId } from "../utils/aiService";
 import { AssistantFace } from "./AssistantFace";
@@ -44,6 +48,38 @@ function AgentSteps({ steps }: { steps: AgentStep[] }) {
     </li>;
   })}</ol>;
 }
+
+/** Copiar com confirmação: vira ✓ por 3 s e volta a ser Copiar (dá para copiar de novo). */
+export function CopyButton({ text, label, className = "" }: { text: string; label?: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  async function copy() {
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      // Sem permissão da Clipboard API (janela sem foco): cópia pelo jeito antigo.
+      const area = Object.assign(document.createElement("textarea"), { value: text });
+      area.style.cssText = "position:fixed;opacity:0";
+      document.body.append(area);
+      area.select();
+      const ok = document.execCommand("copy");
+      area.remove();
+      if (!ok) return;
+    }
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 3000);
+  }
+  const title = copied ? "Copiado" : "Copiar";
+  return <button className={`copy-button ${copied ? "copied" : ""} ${className}`} onClick={() => void copy()} title={title} aria-label={title}>
+    {copied ? <Check size={13} /> : <Copy size={13} />}{label && <span>{copied ? "Copiado" : label}</span>}
+  </button>;
+}
+
+/** Item do menu de "/" (skills) e "@" (conectores MCP). */
+interface MentionItem { kind: Invocation["kind"]; id: string; label: string; description: string; disabled?: boolean }
+interface SkillInfo { id: string; name: string; description: string }
+interface McpServerStatus { name: string; disabled: boolean; running: boolean; tools: string[]; error?: string }
 
 function upsertStep(steps: AgentStep[], step: AgentStep): AgentStep[] {
   const index = steps.findIndex((item) => item.id === step.id);
@@ -102,6 +138,13 @@ export function ChatView() {
   const setApproval = (access: ApprovalMode) => dispatch({ type: "setAccess", access });
   const [confirmRequest, setConfirmRequest] = useState<{ step: AgentStep; resolve: (answer: ConfirmAnswer) => void }>();
   const agentCancel = useRef(false);
+  /** Skills ("/") e conectores ("@") escolhidos para a próxima mensagem. */
+  const [invocations, setInvocations] = useState<Invocation[]>([]);
+  const [mention, setMention] = useState<{ kind: Invocation["kind"]; query: string; start: number }>();
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [skills, setSkills] = useState<SkillInfo[]>();
+  const [mcpServers, setMcpServers] = useState<McpServerStatus[]>();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   /** Provedores em nuvem com chave salva (só o "tem ou não"; a chave fica no Rust). */
   const [cloudKeys, setCloudKeys] = useState<Record<string, boolean>>({});
   const [expression, setExpression] = useState<RobotExpression>("idle");
@@ -148,6 +191,9 @@ export function ChatView() {
     const list = messagesRef.current;
     if (list && followLatest.current) list.scrollTop = list.scrollHeight;
   }, [chat.messages]);
+
+  // Com "Controlar o PC" ligado, os conectores MCP já sobem antes da primeira tarefa.
+  useEffect(() => { if (state.agentMode && !isQAOffline()) warmAgent(); }, [state.agentMode]);
 
   useEffect(() => {
     followLatest.current = true;
@@ -264,13 +310,18 @@ export function ChatView() {
       .catch(() => undefined);
   }
 
-  function cloudRow(provider: { id: string; name: string; defaultModel: string }) {
-    const value = cloudModelValue(provider.id, provider.defaultModel);
-    const hasKey = cloudKeys[provider.id];
-    const active = chatModel === value;
-    const name = <span className="model-row-name"><b>{CLOUD_PRODUCT_NAMES[provider.id] ?? provider.name}</b><code>{provider.defaultModel}</code></span>;
-    if (hasKey) return <button key={provider.id} className={`model-mode-row ${active ? "active" : ""}`} title={`${provider.name} · ${provider.defaultModel}`} onClick={() => { dispatch({ type: "setModel", chatId: chat.id, model: value }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>Nuvem</small>{active ? <Check size={14} /> : <Cloud size={13} />}</button>;
-    return <button key={provider.id} className="model-mode-row cloud-locked" title="Adicione uma chave de API para usar este modelo" onClick={() => { dispatch({ type: "settings", open: true, tab: "providers", focusModel: provider.id, notice: `Adicione uma chave de API da ${provider.name} para usar ${CLOUD_PRODUCT_NAMES[provider.id] ?? provider.name} (${provider.defaultModel}).` }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>Sem chave</small><KeyRound size={13} /></button>;
+  /** Provedor com chave: uma linha por modelo. Sem chave: linhas inativas que levam a Provedores. */
+  function cloudRows(provider: ProviderConfig) {
+    const product = CLOUD_PRODUCT_NAMES[provider.id] ?? provider.name;
+    // Sem chave, uma linha por provedor basta (todas levariam ao mesmo lugar).
+    const models = cloudKeys[provider.id] ? providerModels(provider) : providerModels(provider).slice(0, 1);
+    return models.map((model) => {
+      const value = cloudModelValue(provider.id, model);
+      const active = chatModel === value;
+      const name = <span className="model-row-name"><b>{product}</b><code title={model}>{model.split("/").pop()}</code></span>;
+      if (cloudKeys[provider.id]) return <button key={value} className={`model-mode-row ${active ? "active" : ""}`} title={`${provider.name} · ${model}`} onClick={() => { dispatch({ type: "setModel", chatId: chat.id, model: value }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>Nuvem</small>{active ? <Check size={14} /> : <Cloud size={13} />}</button>;
+      return <button key={value} className="model-mode-row cloud-locked" aria-disabled="true" title="Inativo: adicione uma chave de API para usar este modelo" onClick={() => { dispatch({ type: "settings", open: true, tab: "providers", focusModel: provider.id, notice: `Adicione uma chave de API da ${provider.name} para usar ${product} (${model}).` }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>Sem chave</small><KeyRound size={13} /></button>;
+    });
   }
 
   function openModelSettings(focusModel?: string) {
@@ -285,10 +336,74 @@ export function ChatView() {
     setActivePopover(null);
   }
 
+  /** Roda o agente e grava passos/resposta na mensagem do assistente. */
+  async function agentTurn(params: { chatId: string; assistantMsgId: string; requestId: string; model: string; history: { role: "user" | "assistant"; content: string }[]; userText: string; images?: string[]; memory: string; invocations?: Invocation[] }): Promise<AgentResult> {
+    agentCancel.current = false;
+    let steps: AgentStep[] = [];
+    const result = await runAgent({
+      model: params.model,
+      history: params.history,
+      userText: params.userText,
+      images: params.images,
+      access: state.access,
+      effort: state.effort,
+      requestId: params.requestId,
+      memory: params.memory,
+      skill: params.invocations?.find((item) => item.kind === "skill")?.id,
+      mcpServer: params.invocations?.find((item) => item.kind === "mcp")?.id,
+      onStep: (step) => { steps = upsertStep(steps, step); dispatch({ type: "updateMessage", chatId: params.chatId, messageId: params.assistantMsgId, patch: { steps } }); },
+      confirm: (step) => new Promise<ConfirmAnswer>((resolve) => setConfirmRequest({ step, resolve })),
+      isCancelled: () => agentCancel.current,
+    });
+    if (result.tokensPerSecond) setLastGeneration({ chatId: params.chatId, model: params.model, tokensPerSecond: result.tokensPerSecond });
+    dispatch({ type: "updateMessage", chatId: params.chatId, messageId: params.assistantMsgId, patch: { text: result.text, steps: result.steps, loading: false, source: result.source, tokens: result.tokens, tokensPerSecond: result.tokensPerSecond } });
+    return result;
+  }
+
+  /** Ação reconhecida sem modelo (catálogo/semântica), executada na mensagem do assistente. */
+  async function catalogTurn(chatId: string, assistantMsgId: string, candidate: ActionCandidate): Promise<AgentResult> {
+    let steps: AgentStep[] = [];
+    const result = await runCatalogAction(candidate, {
+      access: state.access,
+      onStep: (step) => { steps = upsertStep(steps, step); dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { steps } }); },
+      confirm: (step) => new Promise<ConfirmAnswer>((resolve) => setConfirmRequest({ step, resolve })),
+    });
+    dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: result.text, steps: result.steps, loading: false, source: result.source } });
+    return result;
+  }
+
+  /** Botões da oferta "Ligar Controlar o PC": executa na mesma mensagem, sem repetir a pergunta. */
+  async function answerOffer(message: ChatMessage, choice: { candidate?: ActionCandidate; enableAgent?: boolean; dismiss?: boolean }) {
+    if (!message.offer || generating) return;
+    const chatId = chat.id;
+    const offer = { ...message.offer, resolved: true };
+    if (choice.dismiss) { dispatch({ type: "updateMessage", chatId, messageId: message.id, patch: { offer } }); return; }
+    if (choice.enableAgent) dispatch({ type: "setAgentMode", on: true });
+    const requestId = crypto.randomUUID();
+    const model = resolveChatModel(chat.model, installedIds, state.preferredModel);
+    dispatch({ type: "updateMessage", chatId, messageId: message.id, patch: { offer, loading: true, text: "", startedAt: Date.now(), steps: undefined } });
+    setPendingRequest({ requestId, chatId, assistantId: message.id });
+    try {
+      if (choice.candidate) await catalogTurn(chatId, message.id, choice.candidate);
+      else {
+        if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
+        const index = chat.messages.findIndex((item) => item.id === message.id);
+        const history = chat.messages.slice(0, Math.max(0, index - 1)).filter((item) => !item.loading && !item.error && (item.sender === "user" || item.sender === "assistant")).map((item) => ({ role: item.sender as "user" | "assistant", content: item.text }));
+        await agentTurn({ chatId, assistantMsgId: message.id, requestId, model, history, userText: message.offer.request, memory: memoryPrompt(state.memory) });
+      }
+    } catch (error) {
+      dispatch({ type: "updateMessage", chatId, messageId: message.id, patch: { text: error instanceof Error ? error.message : String(error), loading: false, error: true } });
+    } finally {
+      setPendingRequest(undefined);
+      setConfirmRequest(undefined);
+    }
+  }
+
   async function send(options: { text?: string; speakAfter?: boolean } = {}) {
     if (generating) return;
     const sourceText = options.text ?? draft.trim();
     if (!sourceText && !attachments.length) return;
+    const sentInvocations = options.text === undefined ? invocations : [];
     const sentFiles = attachments;
     const attachmentText = sentFiles.length ? `[Anexos: ${sentFiles.map((file) => file.name).join(", ")}]` : "";
     const text = [sourceText, attachmentText].filter(Boolean).join("\n");
@@ -300,13 +415,21 @@ export function ChatView() {
     if (model && model !== chat.model) dispatch({ type: "setModel", chatId, model });
 
     const isFirstQuestion = !chat.messages.some((message) => message.sender === "user");
-    dispatch({ type: "addMessage", chatId, message: { id: userMsgId, sender: "user", text, time: "agora" } });
-    setDraft(""); setAttachments([]);
+    dispatch({ type: "addMessage", chatId, message: { id: userMsgId, sender: "user", text, time: "agora", invocations: sentInvocations.length ? sentInvocations : undefined } });
+    setDraft(""); setAttachments([]); setInvocations([]); setMention(undefined);
     setActivePopover(null); setModelMenuOpen(false);
     followLatest.current = true;
     setOrbitalState(nextOrbitalState("request-start"));
     const startedAt = Date.now();
-    dispatch({ type: "addMessage", chatId, message: { id: assistantMsgId, sender: "assistant", text: "", time: "agora", loading: true, model, startedAt } });
+    // Memória: "não use emojis", "me chame de…" valem já nesta resposta e nas próximas conversas.
+    let memory = state.memory;
+    let memoryNote: string[] | undefined;
+    if (memory.learn && sourceText) {
+      const learned = applyDetected(memory, detectMemory(sourceText));
+      if (learned.changes.length) { memory = learned.memory; memoryNote = learned.changes; dispatch({ type: "setMemory", patch: learned.memory }); }
+    }
+    const memoryBlock = memoryPrompt(memory);
+    dispatch({ type: "addMessage", chatId, message: { id: assistantMsgId, sender: "assistant", text: "", time: "agora", loading: true, model, startedAt, memoryNote } });
 
     setPendingRequest({ requestId, chatId, assistantId: assistantMsgId });
     let attached = { images: [] as string[], text: "" };
@@ -324,32 +447,45 @@ export function ChatView() {
     let thinkingTokens = 0;
     let thinkingMs: number | undefined;
     try {
-      if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
-      if (state.agentMode && !isQAOffline()) {
-        // Modo "Controlar o PC": o agente executa ferramentas e mostra cada passo.
-        agentCancel.current = false;
-        let steps: AgentStep[] = [];
-        const result = await runAgent({
-          model,
+      const forceAgent = sentInvocations.length > 0;
+      if ((state.agentMode || forceAgent) && !isQAOffline()) {
+        // Modo "Controlar o PC" (ou "/skill", "@conector"): o agente executa ferramentas e mostra cada passo.
+        if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
+        const result = await agentTurn({
+          chatId, assistantMsgId, requestId, model, memory: memoryBlock, invocations: sentInvocations,
           history: history.slice(0, -1).filter((item) => item.role === "user" || item.role === "assistant").map((item) => ({ role: item.role as "user" | "assistant", content: item.content })),
           userText: attached.text ? `${sourceText}\n\n${attached.text}` : sourceText,
           images: attached.images,
-          access: state.access,
-          effort: state.effort,
-          requestId,
-          onStep: (step) => { steps = upsertStep(steps, step); dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { steps } }); },
-          confirm: (step) => new Promise<ConfirmAnswer>((resolve) => setConfirmRequest({ step, resolve })),
-          isCancelled: () => agentCancel.current,
         });
-        if (result.tokensPerSecond) setLastGeneration({ chatId, model, tokensPerSecond: result.tokensPerSecond });
-        dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: result.text, steps: result.steps, loading: false, source: result.source, tokens: result.tokens, tokensPerSecond: result.tokensPerSecond } });
         if (isFirstQuestion && sourceText) refineTitle(chatId, model, sourceText);
         if (options.speakAfter && result.text) startSpeaking(result.text);
         else setOrbitalState(nextOrbitalState("reset"));
         return;
       }
+      if (sourceText && !attached.images.length && !attached.text && !isQAOffline()) {
+        // "Controlar o PC" desligado: pedidos conhecidos ("abre o powershell") rodam direto pelo catálogo,
+        // sem gastar tokens; outras ações no PC ganham o botão "Ligar Controlar o PC e executar".
+        const match = await matchAction(sourceText);
+        const action = looksLikePcAction(sourceText);
+        if (match.kind === "run") {
+          const result = await catalogTurn(chatId, assistantMsgId, match.candidate);
+          if (options.speakAfter && result.text) startSpeaking(result.text); else setOrbitalState(nextOrbitalState("reset"));
+          return;
+        }
+        if (action) {
+          const candidates = match.kind === "suggest" ? match.candidates : undefined;
+          const offerText = candidates
+            ? "Não tenho certeza do que você quer abrir. Escolha uma opção ou ligue **Controlar o PC** para eu resolver sozinho:"
+            : "Isso é uma ação no computador. Para eu executar, ligue **Controlar o PC** (na barra de mensagem) — ou clique abaixo:";
+          dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: offerText, loading: false, source: "Open Assistant", offer: { request: sourceText, candidates } } });
+          setOrbitalState(nextOrbitalState("reset"));
+          return;
+        }
+      }
+      if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
       const reply = await askAI(model, history, {
         requestId,
+        memory: memoryBlock,
         effort: state.effort,
         onDelta: (delta) => {
           content += delta.content;
@@ -486,6 +622,52 @@ export function ChatView() {
 
   function chooseFiles() { fileInput.current?.click(); setActivePopover(null); setModelMenuOpen(false); }
 
+  // Carrega skills e conectores na primeira vez que o usuário digita "/" ou "@".
+  useEffect(() => {
+    if (!mention || isQAOffline()) return;
+    if (mention.kind === "skill" && !skills) invoke<SkillInfo[]>("list_skills").then(setSkills).catch(() => setSkills([]));
+    if (mention.kind === "mcp" && !mcpServers) invoke<{ servers: McpServerStatus[] }>("mcp_overview").then((overview) => setMcpServers(overview.servers)).catch(() => setMcpServers([]));
+  }, [mention, skills, mcpServers]);
+
+  const mentionItems: MentionItem[] = useMemo(() => {
+    if (!mention) return [];
+    const query = mention.query.toLocaleLowerCase();
+    const items: MentionItem[] = mention.kind === "skill"
+      ? (skills ?? []).map((skill) => ({ kind: "skill", id: skill.name, label: `/${skill.name}`, description: skill.description }))
+      : (mcpServers ?? []).map((server) => ({ kind: "mcp", id: server.name, label: `@${server.name}`, description: server.disabled ? "Desligado — ligue em Configurações › Conectores MCP" : server.running ? `${server.tools.length} ferramentas` : server.error ? `Erro: ${server.error}` : "Liga ao enviar", disabled: server.disabled }));
+    return items.filter((item) => item.label.toLocaleLowerCase().includes(query) || item.description.toLocaleLowerCase().includes(query)).slice(0, 12);
+  }, [mention, skills, mcpServers]);
+
+  function updateDraft(value: string, caret: number) {
+    setDraft(value);
+    const found = findMention(value, caret);
+    setMention(found);
+    if (found?.kind !== mention?.kind || found?.query !== mention?.query) setMentionIndex(0);
+  }
+
+  function chooseMention(item: MentionItem) {
+    if (!mention || item.disabled) return;
+    const caret = textareaRef.current?.selectionStart ?? draft.length;
+    const next = `${draft.slice(0, mention.start)}${draft.slice(caret)}`.replace(/^\s+/, "");
+    setDraft(next);
+    // Uma skill e um conector por mensagem: escolher outro troca o anterior.
+    setInvocations((items) => [...items.filter((current) => current.kind !== item.kind), { kind: item.kind, id: item.id, label: item.label }]);
+    setMention(undefined);
+    requestAnimationFrame(() => { textareaRef.current?.focus(); textareaRef.current?.setSelectionRange(mention.start, mention.start); });
+  }
+
+  function onComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mention) {
+      const enabled = mentionItems.filter((item) => !item.disabled);
+      if (event.key === "ArrowDown" && mentionItems.length) { event.preventDefault(); setMentionIndex((index) => (index + 1) % mentionItems.length); return; }
+      if (event.key === "ArrowUp" && mentionItems.length) { event.preventDefault(); setMentionIndex((index) => (index - 1 + mentionItems.length) % mentionItems.length); return; }
+      if ((event.key === "Enter" || event.key === "Tab") && enabled.length) { event.preventDefault(); chooseMention(mentionItems[mentionIndex]?.disabled ? enabled[0] : mentionItems[mentionIndex] ?? enabled[0]); return; }
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMention(undefined); return; }
+    }
+    if (event.key === "Backspace" && !draft && invocations.length) { setInvocations((items) => items.slice(0, -1)); return; }
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }
+  }
+
   function chooseProject(name: string) {
     setContextProject(name);
     setActivePopover(null);
@@ -523,7 +705,7 @@ export function ChatView() {
           return <div key={index} className="code-block" style={{ margin: "10px 0", background: "rgba(0,0,0,0.35)", borderRadius: "8px", overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", background: "rgba(255,255,255,0.04)", fontSize: "11px", opacity: 0.8 }}>
               <span>{lang || "code"}</span>
-              <button onClick={() => navigator.clipboard.writeText(code)} style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}><Copy size={11} />Copiar</button>
+              <CopyButton text={code} label="Copiar" className="code-copy" />
             </div>
             <pre style={{ margin: 0, padding: "12px", fontSize: "13px", fontFamily: "Consolas, monospace", overflowX: "auto" }}><code>{code}</code></pre>
           </div>;
@@ -572,7 +754,10 @@ export function ChatView() {
         </div>
       </div>}
       {chat.messages.map((message) => {
-        if (message.sender === "user") return <article key={message.id} className="msg msg-user"><div className="msg-bubble">{renderContent(message.text)}</div></article>;
+        if (message.sender === "user") return <article key={message.id} className="msg msg-user">
+          <div className="msg-bubble">{message.invocations && <div className="msg-invocations">{message.invocations.map((item) => <span key={`${item.kind}-${item.id}`} className={`invocation-chip ${item.kind}`}>{item.kind === "skill" ? <Sparkles size={11} /> : <AtSign size={11} />}{item.label.replace(/^[/@]/, "")}</span>)}</div>}{renderContent(message.text)}</div>
+          <div className="msg-user-tools"><CopyButton text={message.text} /></div>
+        </article>;
         const streaming = pendingRequest?.assistantId === message.id && !message.loading;
         const interrupted = message.source?.includes("interrompida");
         return <article key={message.id} className={`msg msg-assistant ${message.error ? "error" : ""}`}>
@@ -581,10 +766,16 @@ export function ChatView() {
             ? <ThinkingIndicator messageId={message.id} startedAt={message.startedAt} tokens={message.thinkingTokens} preview={message.thinking} />
             : message.error
               ? <div className="message-error"><p>{message.text}</p><div>{local.ollama === "offline" && <button onClick={() => startOllama()}><Play size={12} />Iniciar Ollama</button>}<button onClick={() => openModelSettings()}><Bot size={12} />Modelos locais</button></div></div>
-              : <>{message.thinking && <details className="message-thinking"><summary>{thinkingSummary(message.thinkingMs, message.thinkingTokens)}</summary><p>{message.thinking}</p></details>}<div className={`msg-content ${streaming ? "streaming" : ""}`}>{renderContent(message.text)}</div></>}
+              : <>{message.thinking && <details className="message-thinking"><summary>{thinkingSummary(message.thinkingMs, message.thinkingTokens)}</summary><p>{message.thinking}</p></details>}<div className={`msg-content ${streaming ? "streaming" : ""}`}>{renderContent(message.text)}</div>
+                {message.offer && !message.offer.resolved && <div className="action-offer">
+                  {message.offer.candidates?.map((candidate) => <button key={`${candidate.id}-${JSON.stringify(candidate.slots)}`} className="flat-button" disabled={generating} onClick={() => void answerOffer(message, { candidate })}><Play size={12} />{candidate.label}</button>)}
+                  <button className="primary-button" disabled={generating} onClick={() => void answerOffer(message, { enableAgent: true })}><MousePointer2 size={13} />Ligar Controlar o PC e executar</button>
+                  <button className="flat-button" onClick={() => void answerOffer(message, { dismiss: true })}>Agora não</button>
+                </div>}</>}
+          {message.memoryNote && message.memoryNote.length > 0 && <button className="memory-note" onClick={() => dispatch({ type: "settings", open: true, tab: "memory" })} title={`Aprendi: ${message.memoryNote.join(" · ")} — clique para ver ou apagar`}><Brain size={12} />Memória atualizada</button>}
           {!message.loading && !streaming && <footer className="msg-footer">
             <span className="msg-meta">{replyFooter(message.model, message.source, message.tokens, message.tokensPerSecond)}{interrupted && <span className="msg-tag">interrompida</span>}</span>
-            {!message.error && <div className="msg-tools"><button onClick={() => navigator.clipboard.writeText(message.text)} title="Copiar"><Copy size={13} /></button><button onClick={() => startSpeaking(message.text)} title="Ler em voz alta"><Volume2 size={13} /></button></div>}
+            {!message.error && <div className="msg-tools"><CopyButton text={message.text} /><button onClick={() => startSpeaking(message.text)} title="Ler em voz alta"><Volume2 size={13} /></button></div>}
           </footer>}
         </article>;
       })}
@@ -610,25 +801,35 @@ export function ChatView() {
       {voiceError && <div className="inline-error">{voiceError}{(voiceNeedsSetup || orbitalState === "error") && <button onClick={openVoiceSettings}><Mic size={12} />Configurar voz</button>}<button aria-label="Fechar aviso" onClick={() => { setVoiceError(""); setVoiceNeedsSetup(false); }}><X size={12} /></button></div>}
       <div className={`composer apple-composer ${listening ? "listening" : ""}`}>
         {listening && <div className="voice-wave"><i /><i /><i /><i /><i /><i /><i /></div>}
+        {mention && <div className="composer-popover mention-popover" role="listbox" aria-label={mention.kind === "skill" ? "Skills" : "Conectores MCP"}>
+          <span className="menu-section-label">{mention.kind === "skill" ? "Skills · /" : "Conectores MCP · @"}</span>
+          {mentionItems.map((item, index) => <button key={item.id} role="option" aria-selected={index === mentionIndex} aria-disabled={item.disabled} className={`${index === mentionIndex ? "active" : ""} ${item.disabled ? "disabled" : ""}`} onMouseEnter={() => setMentionIndex(index)} onMouseDown={(event) => { event.preventDefault(); chooseMention(item); }}>
+            <span className="mention-icon">{item.kind === "skill" ? <Sparkles size={14} /> : <AtSign size={14} />}</span>
+            <span className="mention-copy"><b>{item.label}</b><small>{item.description}</small></span>
+          </button>)}
+          {mentionItems.length === 0 && <small className="local-model-empty">{(mention.kind === "skill" ? skills : mcpServers) === undefined ? "Carregando…" : mention.kind === "skill" ? "Nenhuma skill encontrada" : "Nenhum conector MCP configurado"}</small>}
+          {mention.kind === "mcp" && <button className="mention-manage" onMouseDown={(event) => { event.preventDefault(); setMention(undefined); dispatch({ type: "settings", open: true, tab: "mcp" }); }}><ChevronRight size={13} />Gerenciar conectores</button>}
+        </div>}
+        {invocations.length > 0 && <div className="attachment-chips invocation-chips">{invocations.map((item) => <span key={`${item.kind}-${item.id}`} className={`invocation-chip ${item.kind}`} title={item.kind === "skill" ? "Esta mensagem usa a skill (liga o agente só para ela)" : "Esta mensagem usa só as ferramentas deste conector"}>{item.kind === "skill" ? <Sparkles size={12} /> : <AtSign size={12} />}{item.label.replace(/^[/@]/, "")}<button aria-label={`Remover ${item.label}`} onClick={() => setInvocations((items) => items.filter((current) => current !== item))}><X size={11} /></button></span>)}</div>}
         {attachments.length > 0 && <div className="attachment-chips">{attachments.map((file) => <span key={`${file.name}-${file.size}`}><FileText size={12} />{file.name}<button onClick={() => setAttachments((items) => items.filter((item) => item !== file))}><X size={11} /></button></span>)}</div>}
-        <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder={listening ? "Ouvindo… (clique no quadrado para enviar)" : transcribing ? "Transcrevendo…" : state.agentMode ? "Peça uma ação no PC — ex.: abre o chrome e entra no g1" : chatModel ? `Pergunte ao ${ollamaModelId(chatModel) ?? modelDisplayName(chatModel)}` : "Pergunte qualquer coisa"} rows={1} />
+        <textarea ref={textareaRef} value={draft} onChange={(event) => updateDraft(event.target.value, event.target.selectionStart ?? event.target.value.length)} onKeyDown={onComposerKeyDown} onBlur={() => setMention(undefined)} placeholder={listening ? "Ouvindo… (clique no quadrado para enviar)" : transcribing ? "Transcrevendo…" : invocations.length ? "Descreva o que fazer com a skill/conector escolhido" : state.agentMode ? "Peça uma ação no PC — ex.: abre o chrome e entra no g1" : chatModel ? `Pergunte ao ${ollamaModelId(chatModel) ?? modelDisplayName(chatModel)} · / skills · @ conectores` : "Pergunte qualquer coisa · / skills · @ conectores"} rows={1} />
         <div className="composer-toolbar apple-composer-toolbar">
           <div className="composer-left-actions">
             <button className={`composer-plus ${quickMenuOpen ? "active" : ""}`} title="Mais opções" aria-label="Mais opções" aria-expanded={quickMenuOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "quick")); setModelMenuOpen(false); }}><Plus size={17} /></button>
             {quickMenuOpen && <div className="composer-popover quick-actions-popover">
-              <button onClick={() => { setModelMenuOpen((open) => !open); void refreshInstalledModels(); }}><span><Sparkles size={14} />Modelo de IA</span><small>{chatModel ? ollamaModelId(chatModel) : "Nenhum"}<ChevronRight size={14} /></small></button>
+              <button onClick={() => { setModelMenuOpen((open) => !open); void refreshInstalledModels(); }}><span><Sparkles size={14} />Modelo de IA</span><small>{chatModel ? ollamaModelId(chatModel) ?? modelDisplayName(chatModel) : "Nenhum"}<ChevronRight size={14} /></small></button>
               {modelMenuOpen && <div className="model-mode-menu quick-submenu model-picker">
                 {local.ollama === "offline" && <button className="model-mode-row ollama-offline" onClick={() => startOllama()} title={local.ollamaError}><span className="model-row-name"><b>Ollama parado</b><code>127.0.0.1:11434</code></span><small>Iniciar</small><Play size={13} /></button>}
                 {local.ollama === "checking" && <small className="local-model-empty">Verificando o Ollama…</small>}
                 <span className="menu-section-label">Instalados</span>
                 {installedOptions.length === 0 && <small className="local-model-empty">{local.ollama === "online" ? "Nenhum modelo baixado ainda" : "Inicie o Ollama para listar os modelos"}</small>}
                 {installedOptions.map(modelRow)}
-                {availableOptions.length > 0 && <span className="menu-section-label">Disponíveis para este PC</span>}
-                {availableOptions.map(modelRow)}
+                <span className="menu-section-label">Nuvem · chave de API</span>
+                {allCloudProviders().flatMap(cloudRows)}
                 <span className="menu-section-label">Microsoft BitNet · 1 bit</span>
                 {bitnetRow()}
-                <span className="menu-section-label">Nuvem</span>
-                {allCloudProviders().map(cloudRow)}
+                {availableOptions.length > 0 && <span className="menu-section-label">Disponíveis para este PC</span>}
+                {availableOptions.map(modelRow)}
                 {incompatibleOptions.length > 0 && <span className="menu-section-label">Incompatíveis</span>}
                 {incompatibleOptions.map(modelRow)}
                 <i className="model-mode-divider" />

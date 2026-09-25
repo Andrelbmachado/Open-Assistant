@@ -37,6 +37,8 @@ export interface AskOptions {
   /** Nível do slider de esforço; tem prioridade sobre `think`. */
   effort?: EffortLevel;
   onDelta?: (delta: AIDelta) => void;
+  /** Bloco de memória do usuário (`memoryPrompt`), somado ao prompt de sistema. */
+  memory?: string;
 }
 
 interface OllamaChatResult {
@@ -57,6 +59,11 @@ interface OllamaChatDelta extends AIDelta {
 export const NO_LOCAL_MODEL_ERROR = "Nenhum modelo local selecionado. Baixe um modelo em Configurações › Modelos locais ou escolha um modelo instalado em + › Modelo de IA.";
 
 const SYSTEM_PROMPT = "Você é o Open Assistant, um assistente pessoal que roda localmente no computador Windows do usuário. Responda no idioma do usuário (por padrão, português do Brasil), de forma clara, direta e útil.";
+/**
+ * O chat comum não executa ações, mas o app executa: nunca diga que é impossível.
+ * Sem isto o modelo respondia "não consigo abrir o PowerShell, sou só um modelo de texto".
+ */
+const APP_CAPABILITIES = "O app Open Assistant consegue controlar este PC (abrir programas e sites, clicar, digitar, executar comandos do PowerShell, usar conectores MCP) quando o botão \"Controlar o PC\", na barra de mensagem, está ligado. Nesta conversa ele está desligado: se o usuário pedir uma ação no computador, não diga que é impossível nem que você é só um modelo de texto; diga em uma frase que é só ligar \"Controlar o PC\" e reenviar o pedido.";
 
 /** Extrai o id do Ollama de `Ollama: <id>` (undefined para outros formatos). */
 export function ollamaModelId(model: string): string | undefined {
@@ -68,9 +75,9 @@ export function ollamaModelId(model: string): string | undefined {
  * Envia a conversa ao Ollama local pelo backend. Não há fallback para nuvem nem
  * resposta simulada: qualquer falha do Ollama é repassada ao chat.
  */
-export function systemPromptFor(effort?: EffortLevel): string {
+export function systemPromptFor(effort?: EffortLevel, memory = ""): string {
   const instruction = effort ? EFFORT_INFO[effort].instruction : undefined;
-  return instruction ? `${SYSTEM_PROMPT} ${instruction}` : SYSTEM_PROMPT;
+  return `${SYSTEM_PROMPT} ${APP_CAPABILITIES}${instruction ? ` ${instruction}` : ""}${memory}`;
 }
 
 const qaCancelled = new Set<string>();
@@ -121,7 +128,7 @@ export async function askAI(model: string, messages: AIMessage[], options: AskOp
     const result = await invoke<OllamaChatResult>("ollama_chat", {
       requestId,
       model: modelId,
-      messages: [{ role: "system", content: systemPromptFor(options.effort) }, ...messages],
+      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory) }, ...messages],
       think: effort?.think ?? options.think ?? false,
       thinkLevel: effort?.think ? effort.thinkLevel : undefined,
     });
@@ -149,7 +156,7 @@ async function askBitnet(messages: AIMessage[], requestId: string, options: AskO
   try {
     const result = await invoke<OllamaChatResult>("bitnet_chat", {
       requestId,
-      messages: [{ role: "system", content: systemPromptFor(options.effort) }, ...messages],
+      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory) }, ...messages],
     });
     return { text: result.content.trim(), source: "BitNet (bitnet.cpp)", tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
   } catch (error) {
@@ -169,7 +176,7 @@ async function askCloud(providerId: string, model: string, messages: AIMessage[]
   try {
     const result = await invoke<OllamaChatResult>("cloud_chat", {
       requestId, providerId, model, baseUrl,
-      messages: [{ role: "system", content: systemPromptFor(options.effort) }, ...messages],
+      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory) }, ...messages],
     });
     return { text: result.content.trim(), source: cloudDisplayName(`Nuvem: ${providerId}/${model}`) ?? providerId, tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
   } catch (error) {

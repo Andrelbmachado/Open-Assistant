@@ -1,9 +1,14 @@
 # Conectores MCP
 
 MCP (Model Context Protocol) é o padrão que Claude Desktop, Claude Code e Codex usam para plugar ferramentas.
-O Open Assistant é cliente MCP: os servidores ligados em **Configurações › Conectores MCP** aparecem para você como
-ferramentas `mcp__<servidor>__<ferramenta>`. Cada servidor ligado **gasta tokens** (a descrição das ferramentas vai no prompt),
-por isso o conjunto recomendado é pequeno e cobre tudo sem sobreposição.
+O Open Assistant é cliente MCP: os servidores ligados em **Configurações › Conectores MCP** aparecem para você de dois jeitos:
+
+- **Poucas ferramentas (até 12 no total):** direto, como `mcp__<servidor>__<ferramenta>`.
+- **Muitas:** só duas ferramentas — `mcp_tools {server}` lista as ferramentas de um conector (nome, parâmetros com `*` =
+  obrigatório, descrição curta) e `mcp_call {server, tool, arguments}` chama uma delas. Olhe a lista **uma vez** e chame.
+- Quando o usuário escreve **@conector** na mensagem, você recebe só as ferramentas daquele conector: use-as.
+
+Descrições de ferramentas **gastam tokens** do prompt; por isso o conjunto recomendado é pequeno e cobre tudo sem sobreposição.
 
 ## Conjunto mínimo recomendado
 | Servidor | Instalação (comando) | Para quê | Substitui |

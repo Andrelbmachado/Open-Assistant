@@ -1,8 +1,9 @@
 /**
  * Loop do agente que controla o PC (modo "Controlar o PC" do chat).
  *
- * 1. Caminho rápido: se a frase bate com um alias do catálogo (`agent_route`), executa o intent
- *    sem chamar o modelo — "abre o chrome" não merece tokens.
+ * 1. Caminho rápido: se a frase bate com um alias do catálogo (`agent_route`) ou com a camada
+ *    semântica (`agent_semantic`, n-gramas na CPU), executa o intent sem chamar o modelo —
+ *    "abre o chrome" não merece tokens. Quase-acertos viram dica para o modelo.
  * 2. Senão, conversa com o Ollama passando as ferramentas da skill `controle-do-windows`
  *    (`agent_prepare`). Cada ferramenta pedida passa por `agent_tool`, que aplica a política
  *    no Rust e pode devolver `needs_confirm`; aí a interface pergunta ao usuário.
@@ -12,6 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { EFFORT_INFO, type EffortLevel } from "./effort";
 import { ollamaModelId } from "./aiService";
 import { BITNET_MODEL_PREFIX } from "./localCatalog";
+import type { ActionCandidate } from "../store/store";
 
 export type AccessMode = "Perguntar" | "Automático" | "Somente leitura";
 export type StepStatus = "running" | "waiting" | "ok" | "error" | "denied" | "cancelled";
@@ -41,7 +43,11 @@ interface ToolCall { function: { name: string; arguments: Record<string, unknown
 
 interface ToolOutcome { status: "ok" | "error" | "needs_confirm" | "denied"; text: string; image?: string; imageWidth?: number; imageHeight?: number; reason?: string }
 interface RouteMatch { id: string; risk: string; slots: Record<string, string>; alias: string }
-interface AgentSetup { systemPrompt: string; tools: unknown[]; skillDir: string }
+interface SemanticMatch { action: "run" | "suggest" | "none"; candidates: ActionCandidate[] }
+
+/** O que fazer com a frase antes de chamar um modelo. */
+export type ActionMatch = { kind: "run"; candidate: ActionCandidate } | { kind: "suggest"; candidates: ActionCandidate[] } | { kind: "none" };
+interface AgentSetup { systemPrompt: string; tools: unknown[]; connectorTools?: unknown[]; pendingConnectors?: string[]; skillDir: string }
 interface ChatResult { model: string; content: string; thinking: string; cancelled: boolean; tokensPerSecond?: number | null; evalCount?: number | null; promptEvalCount?: number | null; toolCalls: ToolCall[] }
 
 export interface AgentRunOptions {
@@ -58,6 +64,12 @@ export interface AgentRunOptions {
   confirm: (step: AgentStep) => Promise<"allow" | "always" | "deny">;
   isCancelled: () => boolean;
   maxSteps?: number;
+  /** Bloco de memória do usuário (`memoryPrompt`), somado ao prompt da skill. */
+  memory?: string;
+  /** "@conector": só as ferramentas deste servidor MCP ficam disponíveis. */
+  mcpServer?: string;
+  /** "/skill": nome da skill pedida (hoje só `controle-do-windows`). */
+  skill?: string;
 }
 
 export interface AgentResult {
@@ -91,8 +103,26 @@ export function describeToolCall(name: string, args: Record<string, unknown>): s
     case "read_url": return `Lendo ${short(text("url"), 60)}`;
     case "read_skill_file": return `Consultando ${text("path")}`;
     case "ask_user": return "Pergunta para você";
+    case "mcp_tools": return `Consultando as ferramentas de ${text("server")}`;
+    case "mcp_call": return `Conector ${text("server")} · ${text("tool")}`;
     default: return name.startsWith("mcp__") ? `Conector ${name.split("__")[1]} · ${name.split("__").slice(2).join("__")}` : name;
   }
+}
+
+/** Rótulo da ação rápida ("Abrir calculadora") e a resposta curta depois de executá-la ("Abri a calculadora."). */
+export function catalogLabel(id: string, slots: Record<string, string>): string {
+  const target = (slots.app ?? slots.url ?? "").replace(/^shell:AppsFolder\\.*$/i, "o app").replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+  if ((id === "open_app" || id === "open_url") && target) return `Abrir ${target}`;
+  if (id === "open_browser") return "Abrir o navegador";
+  if (id === "browser_search" && slots.query) return `Pesquisar "${slots.query}"`;
+  if (id === "run_command" && slots.command) return describeToolCall("run_command", { command: slots.command });
+  return describeToolCall("run_intent", { id, slots });
+}
+
+export function catalogReply(label: string, output: string): string {
+  if (/^Abrir /.test(label)) return `Abri ${label.slice(6)}.`;
+  const first = output.split("\n").find((line) => line.trim())?.replace(/^OK:\s*/, "").trim();
+  return first ? `Pronto: ${first}` : "Pronto.";
 }
 
 /** Argumentos chegam como objeto (Ollama) ou string JSON (outros runtimes). */
@@ -119,13 +149,53 @@ function clip(text: string, size = MAX_TOOL_OUTPUT) {
 
 let cachedSetup: Promise<AgentSetup> | undefined;
 
+/** Prepara o agente em segundo plano (liga os conectores MCP) para a 1ª tarefa não esperar. */
+export function warmAgent() {
+  void prepare().catch(() => undefined);
+}
+
 /** Descarta o prompt/ferramentas em cache (chame depois de mudar conectores MCP ou a skill). */
 export function resetAgentSetup() {
   cachedSetup = undefined;
 }
 function prepare(): Promise<AgentSetup> {
-  cachedSetup ??= invoke<AgentSetup>("agent_prepare").catch((error) => { cachedSetup = undefined; throw error; });
+  cachedSetup ??= invoke<AgentSetup>("agent_prepare")
+    // Conector ainda ligando: a próxima tarefa prepara de novo para já incluí-lo.
+    .then((setup) => { if (setup.pendingConnectors?.length) cachedSetup = undefined; return setup; })
+    .catch((error) => { cachedSetup = undefined; throw error; });
   return cachedSetup;
+}
+
+/** Nome do servidor como aparece nas ferramentas (`mcp__<servidor>__<ferramenta>`), igual ao `mcp.rs::exposed_name`. */
+export function mcpToolPrefix(server: string): string {
+  return `mcp__${server.replace(/[^A-Za-z0-9_-]/g, "_")}__`;
+}
+
+/**
+ * Reconhece a frase sem modelo: alias exato do catálogo → executa; camada semântica
+ * ≥ 0,82 → executa; 0,65–0,82 → sugestões; abaixo disso → conversa normal.
+ */
+export async function matchAction(text: string): Promise<ActionMatch> {
+  const route = await invoke<RouteMatch | null>("agent_route", { text }).catch(() => null);
+  if (route) return { kind: "run", candidate: { id: route.id, risk: route.risk, slots: route.slots, label: catalogLabel(route.id, route.slots) } };
+  const semantic = await invoke<SemanticMatch>("agent_semantic", { text }).catch(() => undefined);
+  if (semantic?.action === "run" && semantic.candidates[0]) return { kind: "run", candidate: semantic.candidates[0] };
+  if (semantic?.action === "suggest" && semantic.candidates.length) return { kind: "suggest", candidates: semantic.candidates };
+  return { kind: "none" };
+}
+
+/** Executa uma ação do catálogo (sem modelo) com a mesma política e confirmação do agente. */
+export async function runCatalogAction(candidate: ActionCandidate, options: Pick<AgentRunOptions, "access" | "onStep" | "confirm">): Promise<AgentResult> {
+  const steps: AgentStep[] = [];
+  const onStep = (step: AgentStep) => { const index = steps.findIndex((item) => item.id === step.id); if (index >= 0) steps[index] = step; else steps.push(step); options.onStep(step); };
+  const step: AgentStep = { id: crypto.randomUUID(), tool: "run_intent", args: { id: candidate.id, slots: candidate.slots }, label: candidate.label || describeToolCall("run_intent", { id: candidate.id, slots: candidate.slots }), status: "running" };
+  try {
+    const outcome = await runStep(step, { access: options.access }, { ...options, onStep } as AgentRunOptions);
+    const text = outcome.status === "ok" ? catalogReply(step.label, outcome.text) : outcome.status === "denied" ? `Não executei: ${outcome.reason ?? outcome.text}` : `Não consegui: ${outcome.text}`;
+    return { text, steps, source: `Catálogo (${candidate.id})` };
+  } finally {
+    void invoke("agent_finish").catch(() => undefined);
+  }
 }
 
 async function callTool(name: string, args: Record<string, unknown>, access: AccessMode, confirmed: boolean): Promise<ToolOutcome> {
@@ -161,16 +231,22 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentResult> {
   const onStep = options.onStep;
   const wrapped: AgentRunOptions = { ...options, onStep: (step) => { track(step); onStep(step); } };
 
+  let hint = "";
   try {
-    // 1. Caminho rápido pelo catálogo (sem imagem anexada, porque aí o pedido é sobre a imagem).
-    if (!options.images?.length) {
-      const route = await invoke<RouteMatch | null>("agent_route", { text: options.userText });
-      if (route) {
-        const step: AgentStep = { id: crypto.randomUUID(), tool: "run_intent", args: { id: route.id, slots: route.slots }, label: describeToolCall("run_intent", { id: route.id, slots: route.slots }), status: "running" };
+    // 1. Caminho rápido pelo catálogo (sem imagem anexada, porque aí o pedido é sobre a imagem;
+    //    nem com "@conector", porque aí o usuário escolheu a ferramenta).
+    if (!options.images?.length && !options.mcpServer) {
+      const match = await matchAction(options.userText);
+      if (match.kind === "run") {
+        const { candidate } = match;
+        const step: AgentStep = { id: crypto.randomUUID(), tool: "run_intent", args: { id: candidate.id, slots: candidate.slots }, label: candidate.label || describeToolCall("run_intent", { id: candidate.id, slots: candidate.slots }), status: "running" };
         const outcome = await runStep(step, state, wrapped);
-        if (outcome.status === "ok") return { text: outcome.text.split("\n").find((line) => line.trim()) ?? "Pronto.", steps, source: `Catálogo (${route.id})` };
-        if (outcome.status === "denied") return { text: `Não executei: ${outcome.reason ?? outcome.text}`, steps, source: `Catálogo (${route.id})` };
+        if (outcome.status === "ok") return { text: catalogReply(step.label, outcome.text), steps, source: `Catálogo (${candidate.id})` };
+        if (outcome.status === "denied") return { text: `Não executei: ${outcome.reason ?? outcome.text}`, steps, source: `Catálogo (${candidate.id})` };
         // Erro no caminho rápido (ex.: app com outro nome): o modelo tenta resolver com as ferramentas.
+      } else if (match.kind === "suggest") {
+        // Quase-acerto: o modelo escolhe entre poucas opções em vez de explorar a tela.
+        hint = `\n\n(Ações prováveis reconhecidas pelo app — use run_intent se uma delas servir: ${match.candidates.map((item) => `${item.id} ${JSON.stringify(item.slots)} = "${item.label}"`).join("; ")})`;
       }
     }
 
@@ -181,10 +257,22 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentResult> {
     // 2. Loop com o modelo.
     const setup = await prepare();
     const effort = options.effort ? EFFORT_INFO[options.effort] : undefined;
+    let tools = setup.tools;
+    let focus = "";
+    if (options.mcpServer) {
+      const prefix = mcpToolPrefix(options.mcpServer);
+      const toolName = (tool: unknown) => (tool as { function?: { name?: string } }).function?.name ?? "";
+      tools = [...setup.tools.filter((tool) => toolName(tool) === "ask_user"), ...(setup.connectorTools ?? setup.tools).filter((tool) => toolName(tool).startsWith(prefix))];
+      if (tools.length <= 1) throw new Error(`O conector @${options.mcpServer} não está rodando ou não tem ferramentas. Ligue-o em Configurações › Conectores MCP.`);
+      focus = `\n\n## Pedido com @${options.mcpServer}\nO usuário escolheu o conector ${options.mcpServer}: resolva usando as ferramentas ${prefix}*.`;
+      hint = `\n\n(Use o conector @${options.mcpServer}: chame uma das ferramentas ${prefix}* antes de responder.)`;
+    } else if (options.skill) {
+      focus = `\n\n## Pedido com /${options.skill}\nO usuário invocou esta skill: siga o SKILL.md acima à risca.`;
+    }
     let messages: AgentMessage[] = [
-      { role: "system", content: setup.systemPrompt },
+      { role: "system", content: `${setup.systemPrompt}${focus}${options.memory ?? ""}` },
       ...options.history.slice(-8).map((item) => ({ role: item.role, content: clip(item.content, 2000) })),
-      { role: "user", content: options.userText, images: options.images?.length ? options.images : undefined },
+      { role: "user", content: `${options.userText}${hint}`, images: options.images?.length ? options.images : undefined },
     ];
     let last: ChatResult | undefined;
     const maxSteps = options.maxSteps ?? 24;
@@ -196,7 +284,7 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentResult> {
         messages: keepLatestImage(messages),
         think: effort?.think ?? false,
         thinkLevel: effort?.think ? effort.thinkLevel : undefined,
-        options: { tools: setup.tools, numCtx: NUM_CTX },
+        options: { tools, numCtx: NUM_CTX },
       });
       if (last.cancelled || options.isCancelled()) return { text: "Tarefa interrompida.", steps, source: `Agente · Ollama (${modelId})` };
       const calls = last.toolCalls ?? [];

@@ -4,11 +4,12 @@ import type { ProviderConfig } from "../utils/providers";
 import anthropicLogo from "../assets/providers/anthropic.svg";
 import deepseekLogo from "../assets/providers/deepseek.svg";
 import fireworksLogo from "../assets/providers/fireworks.svg";
+import geminiLogo from "../assets/providers/gemini.svg";
 import openaiLogo from "../assets/providers/openai.svg";
 import perplexityLogo from "../assets/providers/perplexity.svg";
 import togetherLogo from "../assets/providers/together.png";
 
-// Logotipos da Wikipédia (OpenAI, Anthropic, DeepSeek, Perplexity) e ícones oficiais (Together AI, Fireworks).
+// Logotipos da Wikipédia (OpenAI, Anthropic, DeepSeek, Perplexity), ícones oficiais (Together AI, Fireworks) e a estrela do Gemini.
 const BRANDS: Record<string, { src: string; kind: "wordmark" | "symbol" }> = {
   openai: { src: openaiLogo, kind: "wordmark" },
   anthropic: { src: anthropicLogo, kind: "wordmark" },
@@ -16,6 +17,7 @@ const BRANDS: Record<string, { src: string; kind: "wordmark" | "symbol" }> = {
   perplexity: { src: perplexityLogo, kind: "wordmark" },
   "together-ai": { src: togetherLogo, kind: "symbol" },
   fireworks: { src: fireworksLogo, kind: "symbol" },
+  google: { src: geminiLogo, kind: "symbol" },
 };
 
 function initials(name: string) {

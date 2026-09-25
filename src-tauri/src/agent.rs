@@ -26,7 +26,7 @@ use tauri::{AppHandle, Manager};
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub const SKILL_NAME: &str = "controle-do-windows";
 /// Suba ao mudar os arquivos empacotados: a cópia em AppData é regravada (exceto `memoria/`).
-const SKILL_VERSION: &str = "2026-09-25.2";
+const SKILL_VERSION: &str = "2026-09-25.3";
 
 /// Arquivos da skill embutidos no executável (fonte: `src-tauri/skills/controle-do-windows`).
 const SKILL_FILES: &[(&str, &str)] = &[
@@ -84,6 +84,12 @@ pub fn ensure_skill(app: &AppHandle) -> Result<PathBuf, String> {
     }
     fs::write(marker, SKILL_VERSION).map_err(|error| error.to_string())?;
     Ok(dir)
+}
+
+/// Conteúdo empacotado de um arquivo da skill (usado pelos testes).
+#[cfg(test)]
+pub fn bundled_file(relative: &str) -> &'static str {
+    SKILL_FILES.iter().find(|(name, _)| *name == relative).map(|(_, content)| *content).unwrap_or_default()
 }
 
 /// Caminho relativo seguro dentro da skill (sem `..`, sem caminho absoluto).
@@ -209,6 +215,17 @@ fn after_trigger(text: &str, aliases: &[String]) -> String {
     text.to_string()
 }
 
+/// Tira aspas/crases só quando envolvem o texto inteiro (`"Get-Date"` → `Get-Date`).
+fn unquote(text: &str) -> &str {
+    let text = text.trim();
+    for quote in ['"', '`', '\''] {
+        if text.len() >= 2 && text.starts_with(quote) && text.ends_with(quote) {
+            return &text[1..text.len() - 1];
+        }
+    }
+    text
+}
+
 fn extract_slots(intent: &Intent, original: &str, text: &str) -> HashMap<String, String> {
     let mut slots = HashMap::new();
     for (name, pattern) in &intent.extract {
@@ -255,6 +272,15 @@ fn extract_slots(intent: &Intent, original: &str, text: &str) -> HashMap<String,
             ];
             if let Some((_, url)) = sites.iter().find(|(site, _)| text.contains(site)) {
                 slots.insert("url".into(), (*url).into());
+            }
+        }
+        // O comando sai do texto original: o normalizado perde maiúsculas, acentos e pontuação ("Get-Date", caminhos).
+        "run_command" if !slots.contains_key("command") => {
+            let command = Regex::new(r"(?i)^\s*(?:por favor,?\s*)?(?:roda|rode|executa|execute|run)\s+(?:o\s+)?(?:comando|command)\s+(.+?)\s*$")
+                .ok()
+                .and_then(|regex| regex.captures(original).and_then(|found| found.get(1)).map(|found| unquote(found.as_str()).to_string()));
+            if let Some(command) = command.filter(|command| !command.is_empty()) {
+                slots.insert("command".into(), command);
             }
         }
         "browser_search" if !slots.contains_key("query") => {
@@ -442,6 +468,8 @@ pub fn decide(tool: &str, args: &Value, access: Access, catalog: &Catalog) -> De
     let string = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
     match tool {
         "look" | "web_search" | "read_url" | "read_skill_file" | "ask_user" | "list_windows" => Decision::Allow,
+        // O intent `run_command` do catálogo ("executa o comando …") é o próprio run_command: mesma política.
+        "run_intent" if string("id") == "run_command" => decide("run_command", &json!({ "command": slots_from(args).get("command").cloned().unwrap_or_default() }), access, catalog),
         "run_intent" => {
             let id = string("id");
             let Some(intent) = catalog.intents.iter().find(|intent| intent.id == id) else {
@@ -475,8 +503,10 @@ pub fn decide(tool: &str, args: &Value, access: Access, catalog: &Catalog) -> De
             Access::Ask => Decision::Confirm("Usar o mouse/teclado no seu computador?".into()),
             Access::Auto => Decision::Allow,
         },
-        name if name.starts_with("mcp__") => match access {
+        "mcp_tools" => Decision::Allow,
+        name if name.starts_with("mcp__") || name == "mcp_call" => match access {
             Access::ReadOnly => Decision::Deny("O acesso está em \"Somente leitura\".".into()),
+            Access::Ask if name == "mcp_call" => Decision::Confirm(format!("Usar o conector {} ({})?", string("server"), string("tool"))),
             Access::Ask => Decision::Confirm("Usar o conector MCP?".into()),
             Access::Auto => Decision::Allow,
         },
@@ -787,6 +817,16 @@ pub fn tool_definitions() -> Value {
     ])
 }
 
+/// Duas ferramentas no lugar de centenas: listar as ferramentas de um conector e chamar uma delas.
+fn connector_meta_tools() -> Vec<Value> {
+    vec![
+        function("mcp_tools", "Lista as ferramentas de um conector MCP ligado (nome, parâmetros e descrição curta).",
+            json!({ "server": { "type": "string", "description": "nome do conector, ex.: fetch" } }), &["server"]),
+        function("mcp_call", "Chama uma ferramenta de um conector MCP (veja os nomes com mcp_tools).",
+            json!({ "server": { "type": "string" }, "tool": { "type": "string" }, "arguments": { "type": "object" } }), &["server", "tool"]),
+    ]
+}
+
 /// Resumo do catálogo em uma linha por área: `open_url(safe)`.
 fn catalog_summary(catalog: &Catalog) -> String {
     catalog
@@ -802,8 +842,16 @@ fn catalog_summary(catalog: &Catalog) -> String {
 pub struct AgentSetup {
     system_prompt: String,
     tools: Value,
+    /// Todas as ferramentas MCP (`mcp__servidor__ferramenta`), usadas quando o usuário escolhe "@conector".
+    connector_tools: Value,
+    /// Conectores que ainda estão ligando: o front não guarda este preparo em cache.
+    pending_connectors: Vec<String>,
     skill_dir: String,
 }
+
+/// Até este total, as ferramentas MCP vão direto para o modelo; acima, só `mcp_tools`/`mcp_call`
+/// (com 9 conectores eram centenas de ferramentas: prompt enorme e um 9B confuso).
+const MCP_INLINE_LIMIT: usize = 12;
 
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -845,6 +893,7 @@ fn execute(app: &AppHandle, tool: &str, args: &Value) -> ToolOutcome {
         y: args.get("y").and_then(Value::as_f64),
     };
     match tool {
+        "run_intent" if string("id") == "run_command" => outcome(run_command(app, "powershell", slots_from(args).get("command").map(String::as_str).unwrap_or_default(), None)),
         "run_intent" => outcome(run_intent(app, &string("id"), &slots_from(args))),
         "run_command" => {
             let shell = if string("shell") == "cmd" { "cmd" } else { "powershell" };
@@ -890,7 +939,14 @@ fn execute(app: &AppHandle, tool: &str, args: &Value) -> ToolOutcome {
         "read_url" => outcome(read_url(&string("url"), args.get("max_chars").and_then(Value::as_u64).unwrap_or(6000) as usize)),
         "read_skill_file" => outcome(read_skill_file(app, &string("path"))),
         "ask_user" => ToolOutcome { status: "ok".into(), text: string("question"), ..Default::default() },
-        name if name.starts_with("mcp__") => match mcp::call(app, name, args) {
+        "mcp_tools" => outcome(mcp::list_tools_text(app, &string("server"))),
+        name if name.starts_with("mcp__") || name == "mcp_call" => {
+            let (exposed, arguments) = if name == "mcp_call" {
+                (mcp::exposed_name(&string("server"), &string("tool")), args.get("arguments").cloned().unwrap_or_else(|| json!({})))
+            } else {
+                (name.to_string(), args.clone())
+            };
+            match mcp::call(app, &exposed, &arguments) {
             Ok(output) => ToolOutcome {
                 status: if output.is_error { "error".into() } else { "ok".into() },
                 text: truncate(&output.text, 8000),
@@ -898,7 +954,8 @@ fn execute(app: &AppHandle, tool: &str, args: &Value) -> ToolOutcome {
                 ..Default::default()
             },
             Err(error) => outcome(Err(error)),
-        },
+            }
+        }
         other => outcome(Err(format!("Ferramenta desconhecida: {other}"))),
     }
 }
@@ -914,18 +971,19 @@ pub async fn agent_prepare(app: AppHandle) -> Result<AgentSetup, String> {
 fn prepare_blocking(app: &AppHandle) -> Result<AgentSetup, String> {
     let app = app.clone();
     let dir = ensure_skill(&app)?;
-    mcp::ensure_started(&app);
+    let pending_connectors = mcp::ensure_started(&app);
     let mut tools = tool_definitions().as_array().cloned().unwrap_or_default();
     let connectors = mcp::tool_definitions(&app);
     let connector_note = if connectors.is_empty() {
         String::new()
+    } else if connectors.len() <= MCP_INLINE_LIMIT {
+        tools.extend(connectors.iter().cloned());
+        format!("\n\n## Conectores MCP ligados\n{} ferramentas `mcp__*` extras (ver references/mcp.md). Use-as quando forem mais precisas que look/click.", connectors.len())
     } else {
-        format!("
-
-## Conectores MCP ligados
-{} ferramentas `mcp__*` extras (ver references/mcp.md). Use-as quando forem mais precisas que look/click.", connectors.len())
+        tools.extend(connector_meta_tools());
+        let servers: Vec<String> = mcp::server_summaries(&app).into_iter().map(|(name, count)| format!("{name} ({count})")).collect();
+        format!("\n\n## Conectores MCP ligados\n{}. Quando um conector for mais preciso que look/click, veja as ferramentas dele com mcp_tools e chame com mcp_call.", servers.join(", "))
     };
-    tools.extend(connectors);
     let skill = fs::read_to_string(dir.join("SKILL.md")).unwrap_or_else(|_| SKILL_FILES[0].1.to_string());
     let preferences = fs::read_to_string(dir.join("memoria").join("preferencias.md")).unwrap_or_default();
     let catalog = load_catalog(&app);
@@ -936,7 +994,40 @@ fn prepare_blocking(app: &AppHandle) -> Result<AgentSetup, String> {
         preferences.trim(),
         std::env::var("USERPROFILE").unwrap_or_default()
     );
-    Ok(AgentSetup { system_prompt: format!("{system_prompt}{connector_note}"), tools: Value::Array(tools), skill_dir: dir.to_string_lossy().into_owned() })
+    Ok(AgentSetup { system_prompt: format!("{system_prompt}{connector_note}"), tools: Value::Array(tools), connector_tools: Value::Array(connectors), pending_connectors, skill_dir: dir.to_string_lossy().into_owned() })
+}
+
+/// Skill instalada, para o "/" do compositor.
+#[derive(Serialize, Clone, Debug)]
+pub struct SkillInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// Lê `name:` e `description:` do cabeçalho YAML do SKILL.md.
+fn skill_info(id: &str, text: &str) -> SkillInfo {
+    let header = text.strip_prefix("---").and_then(|rest| rest.find("\n---").map(|end| &rest[..end])).unwrap_or_default();
+    let field = |key: &str| header.lines().find_map(|line| line.strip_prefix(&format!("{key}:")).map(|value| value.trim().trim_matches('"').to_string()));
+    SkillInfo { id: id.to_string(), name: field("name").unwrap_or_else(|| id.to_string()), description: field("description").unwrap_or_default() }
+}
+
+/// Skills em `%LOCALAPPDATA%\com.openassistant.windows\skills\*\SKILL.md` (a empacotada é instalada antes).
+#[tauri::command]
+pub fn list_skills(app: AppHandle) -> Vec<SkillInfo> {
+    let Ok(dir) = ensure_skill(&app) else { return Vec::new() };
+    let Some(root) = dir.parent() else { return Vec::new() };
+    let mut skills: Vec<SkillInfo> = fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let text = fs::read_to_string(entry.path().join("SKILL.md")).ok()?;
+            Some(skill_info(&entry.file_name().to_string_lossy(), &text))
+        })
+        .collect();
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    skills
 }
 
 /// Caminho rápido: devolve o intent quando a frase bate com um alias do catálogo.
@@ -979,6 +1070,13 @@ mod tests {
         let catalog = catalog();
         assert!(catalog.intents.len() > 40);
         assert!(catalog.intents.iter().all(|intent| ["safe", "confirm", "deny"].contains(&intent.risk.as_str())));
+    }
+
+    #[test]
+    fn skill_header_is_read_for_the_slash_menu() {
+        let info = skill_info("controle-do-windows", SKILL_FILES[0].1);
+        assert_eq!(info.name, "controle-do-windows");
+        assert!(info.description.starts_with("Controla o computador"));
     }
 
     #[test]
@@ -1059,6 +1157,33 @@ mod tests {
         assert!(matches!(decide("type_text", &json!({}), Access::ReadOnly, &catalog), Decision::Deny(_)));
         assert!(matches!(decide("press_keys", &json!({ "keys": "alt+f4" }), Access::Auto, &catalog), Decision::Confirm(_)));
         assert_eq!(decide("look", &json!({}), Access::ReadOnly, &catalog), Decision::Allow);
+    }
+
+    #[test]
+    fn run_command_keeps_the_original_casing() {
+        let found = route(&catalog(), r#"executa o comando Get-ChildItem "C:\Users""#).expect("rota");
+        assert_eq!(found.id, "run_command");
+        assert_eq!(found.slots["command"], r#"Get-ChildItem "C:\Users""#);
+        let quoted = route(&catalog(), "roda o comando `Get-Date`").expect("rota");
+        assert_eq!(quoted.slots["command"], "Get-Date");
+    }
+
+    #[test]
+    fn catalog_run_command_uses_the_command_policy() {
+        let catalog = catalog();
+        let intent = |command: &str| json!({ "id": "run_command", "slots": { "command": command } });
+        assert_eq!(decide("run_intent", &intent("Get-Date"), Access::Auto, &catalog), decide("run_command", &json!({ "command": "Get-Date" }), Access::Auto, &catalog));
+        assert!(matches!(decide("run_intent", &intent("format C:"), Access::Auto, &catalog), Decision::Deny(_)));
+    }
+
+    #[test]
+    fn connector_meta_tools_follow_the_mcp_policy() {
+        let catalog = catalog();
+        let call = json!({ "server": "fetch", "tool": "fetch", "arguments": { "url": "https://example.com" } });
+        assert_eq!(decide("mcp_tools", &json!({ "server": "fetch" }), Access::ReadOnly, &catalog), Decision::Allow);
+        assert_eq!(decide("mcp_call", &call, Access::Ask, &catalog), Decision::Confirm("Usar o conector fetch (fetch)?".into()));
+        assert!(matches!(decide("mcp_call", &call, Access::ReadOnly, &catalog), Decision::Deny(_)));
+        assert_eq!(decide("mcp_call", &call, Access::Auto, &catalog), Decision::Allow);
     }
 
     #[test]

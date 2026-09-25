@@ -5,6 +5,19 @@ PowerShell, servidores MCP) e APIs do Windows (UI Automation, SendInput, captura
 
 ## Fluxos principais
 
+### Antes de qualquer modelo: ação rápida e memória
+`ChatView.send` primeiro:
+1. **Memória** — `memory.detectMemory` lê pedidos como "não use emojis" / "me chame de Dé" / "lembre que…" (regex, sem
+   modelo) e grava em `state.memory`; `memory.memoryPrompt` vira um bloco somado ao prompt de sistema do chat comum,
+   da nuvem e do agente. Configurações › Memória edita tudo (nome, apelido, estilos, fatos).
+2. **Ação rápida** (com "Controlar o PC" desligado também) — `agentRunner.matchAction`: `agent_route` (alias exato do
+   `intents.yaml`) e depois `agent_semantic` (`semantic.rs`: vetores de trigramas na CPU sobre intents sem parâmetro,
+   `memoria/apps.yaml`, apps do menu Iniciar em cache e sites comuns). ≥ 0,82 executa direto (`runCatalogAction`, mesma
+   política do agente, rodapé "Ação rápida · sem tokens"); 0,65–0,82 vira sugestão. Se não reconheceu mas
+   `pcIntent.looksLikePcAction` diz que é ação no PC, a resposta é a oferta **"Ligar Controlar o PC e executar"** (sem modelo).
+3. **"/skill" e "@conector"** escolhidos no compositor (`composerMentions.findMention`, `list_skills`, `mcp_overview`)
+   mandam a mensagem para o agente; com "@", só as ferramentas daquele conector vão para o modelo.
+
 ### Chat normal
 `ChatView.send` → `aiService.askAI` → `invoke("ollama_chat")` → `lib.rs::run_chat` faz `POST /api/chat` (stream) →
 cada lote de tokens vira o evento **`ollama-chat-delta`** `{requestId, content, thinking}` → a mensagem é atualizada.
@@ -27,7 +40,9 @@ ChatView (agentMode) → agentRunner.runAgent
    └─ agent_finish() esconde o cursor próprio
 ```
 Ferramentas nativas (`agent::tool_definitions`): `run_intent`, `run_command`, `look`, `click`, `type_text`, `press_keys`,
-`scroll`, `focus_window`, `web_search`, `read_url`, `read_skill_file`, `ask_user`. MCP: `mcp__<servidor>__<ferramenta>`.
+`scroll`, `focus_window`, `web_search`, `read_url`, `read_skill_file`, `ask_user`. MCP: até 12 ferramentas no total vão
+direto como `mcp__<servidor>__<ferramenta>`; acima disso só `mcp_tools {server}` (lista compacta) e `mcp_call {server, tool,
+arguments}` — com 9 conectores eram centenas de ferramentas no prompt e o 9B se perdia.
 
 **Política** (`agent::decide`): leitura (`look`, `web_search`, `read_url`, `read_skill_file`) sempre liberada;
 intents seguem o risco do catálogo; `run_command` bloqueia padrões perigosos (formatar, `iex`, `.ssh`, HKLM…) em qualquer modo
@@ -50,16 +65,19 @@ build do bitnet.cpp) → evento **`tool-progress`** `{toolId, state, phase, comp
 Tudo em `%LOCALAPPDATA%\com.openassistant.windows\tools\<id>` com marcador `.installed`.
 
 ### Conectores MCP
-`mcp.json` (formato Claude Desktop) → `mcp::ensure_started` (no `agent_prepare` ou "Iniciar ligados") inicia cada servidor
-com `cmd /c <command> <args>`, faz `initialize` + `tools/list` → ferramentas entram no agente → `tools/call` no `agent_tool`.
+`mcp.json` (formato Claude Desktop) → `mcp::ensure_started` (no `agent_prepare`, ao ligar "Controlar o PC" via
+`warmAgent`, ou "Iniciar ligados") inicia **em paralelo** cada servidor com `cmd /c <command> <args>`, faz `initialize` +
+`tools/list` e espera no máximo 15 s; os lentos continuam em segundo plano (`pendingConnectors` faz o front preparar de novo
+na próxima tarefa) → ferramentas entram no agente → `tools/call` no `agent_tool`.
 
 ## Comandos Tauri
 | Módulo | Comandos |
 |---|---|
-| lib.rs | `spawn_terminal_session`, `write_terminal_session`, `terminate_terminal_session`, `save_credential`, `read_credential`, `delete_credential`, `check_local_runtime_status`, `start_runtime`, `scan_hardware`, `install_ollama`, `cancel_local_model_operation`, `ollama_list_models`, `ollama_pull_model`, `ollama_stop_pull`, `ollama_chat`, `ollama_cancel_chat`, `bitnet_chat`, `app_ready` |
+| lib.rs | `spawn_terminal_session`, `write_terminal_session`, `terminate_terminal_session`, `save_credential`, `read_credential`, `delete_credential`, `has_credential`, `check_local_runtime_status`, `start_runtime`, `scan_hardware`, `install_ollama`, `cancel_local_model_operation`, `ollama_list_models`, `ollama_pull_model`, `ollama_stop_pull`, `ollama_chat`, `ollama_cancel_chat`, `bitnet_chat`, `cloud_chat`, `app_ready` |
 | tools.rs | `tools_status`, `tool_install`, `tool_cancel`, `tool_remove` |
 | speech.rs | `asr_transcribe`, `tts_synthesize` |
-| agent.rs | `agent_prepare`, `agent_route`, `agent_tool`, `agent_finish` |
+| agent.rs | `agent_prepare`, `agent_route`, `agent_tool`, `agent_finish`, `list_skills` |
+| semantic.rs | `agent_semantic` (executar / sugerir / nada) |
 | mcp.rs | `mcp_overview`, `mcp_save_config`, `mcp_start`, `mcp_stop` |
 
 ## Eventos
@@ -73,4 +91,7 @@ com `cmd /c <command> <args>`, faz `initialize` + `tools/list` → ferramentas e
 
 ## Dados em disco
 `%LOCALAPPDATA%\com.openassistant.windows\`: `EBWebView` (localStorage do app), `tools\` (ferramentas baixadas),
-`skills\controle-do-windows\` (skill editável; `memoria\` nunca é sobrescrita; `logs\acoes.jsonl` registra cada ação), `mcp.json`.
+`skills\controle-do-windows\` (skill editável; `memoria\` nunca é sobrescrita; `logs\acoes.jsonl` registra cada ação;
+`cache\startapps.json` = apps do menu Iniciar, renovado a cada 24 h), `mcp.json`. A memória do usuário fica no localStorage
+(`open-assistant-state-v2` → `memory`). Chaves de nuvem: Gerenciador de Credenciais do Windows (Google/Gemini usa o
+endpoint compatível com OpenAI em `generativelanguage.googleapis.com/v1beta/openai`).

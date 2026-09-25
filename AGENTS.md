@@ -34,6 +34,7 @@ src/                         Front (React)
     ToolsPanel.tsx           Aba "Ferramentas de IA" (por empresa)
     VoiceSettings.tsx        Aba "Voz" (microfone, reconhecimento, voz)
     McpPanel.tsx             Aba "Conectores MCP"
+    MemorySettings.tsx       Aba "Memória" (nome, apelido, estilo, fatos aprendidos)
     LocalModelsPanel.tsx     Aba "Modelos locais" (Ollama)
     AgentCursor.tsx          Cursor próprio do agente (janela transparente)
     ThinkingIndicator.tsx    Indicador "pensando" (Pac-Man) e resumo do raciocínio
@@ -41,8 +42,13 @@ src/                         Front (React)
     RobotFace, SuperOrbital, OrbitalCanvas, ShaderCanvas, AssistantFace, FacePreview   Rosto do modo voz
     WorkflowCanvas.tsx / TerminalView.tsx / CommandPalette.tsx / EffortControl.tsx / ProviderSelect.tsx
   utils/                     Lógica pura (quase tudo com *.test.ts ao lado)
-    agentRunner.ts           Loop do agente (rota rápida → Ollama com tools → agent_tool)
-    aiService.ts             Chat normal com Ollama/BitNet (streaming por evento)
+    agentRunner.ts           Loop do agente (rota rápida/semântica → Ollama com tools → agent_tool); matchAction, runCatalogAction
+    aiService.ts             Chat normal com Ollama/BitNet/nuvem (streaming por evento); prompt diz que o app controla o PC
+    memory.ts                Memória do usuário: detectMemory ("não use emojis"), memoryPrompt (bloco do prompt)
+    pcIntent.ts              looksLikePcAction: pedido de ação no PC com o modo desligado → oferta de ligar
+    composerMentions.ts      "/" skills e "@" conectores no compositor
+    connectionStatus.ts      Linha/ponto sob o ícone de computador na barra lateral (verde = IA funcionando)
+    cloudModels.ts           Provedores em nuvem (OpenAI, Anthropic, Google/Gemini…), modelos por provedor
     localCatalog.ts          Catálogo de modelos + compatibilidade com o hardware + prefixos "Ollama: "/"BitNet: "
     toolCatalog.ts           Ferramentas de IA por empresa (ids = receitas do tools.rs)
     mcpPresets.ts            Conectores MCP sugeridos
@@ -57,7 +63,9 @@ src/                         Front (React)
 
 src-tauri/                   Backend (Rust)
   src/lib.rs                 Comandos Tauri gerais: terminal, credenciais, Ollama (chat/pull/tags), hardware, runtimes
-  src/agent.rs               Agente: skill empacotada, roteador de intents, política allow/confirm/deny, execução
+  src/agent.rs               Agente: skill empacotada, roteador de intents, política allow/confirm/deny, execução, list_skills
+  src/semantic.rs            Ação rápida sem modelo: vetores de trigramas (CPU) de intents, apps, apps do menu Iniciar e sites
+  src/cloud.rs               Chat com modelos em nuvem (compatível OpenAI, Anthropic, Gemini); a chave nunca sai do Rust
   src/computer.rs            Tela: UI Automation, prints Set-of-Mark, mouse/teclado (enigo), janelas, cursor próprio
   src/mcp.rs                 Cliente MCP (stdio JSON-RPC), mcp.json no formato do Claude Desktop
   src/tools.rs               Downloads de ferramentas (receitas fixas por id), venvs Python via uv, build do BitNet

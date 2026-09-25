@@ -19,6 +19,7 @@ mod bitnet;
 mod cloud;
 mod computer;
 mod mcp;
+mod semantic;
 mod speech;
 mod tools;
 
@@ -1508,6 +1509,12 @@ pub fn run() {
         .manage(computer::ComputerState::default())
         .manage(mcp::McpState::default())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            // Apps do menu Iniciar para o reconhecimento rápido ("abre o word") sem esperar o 1º pedido.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || semantic::warm_up(&handle));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             spawn_terminal_session,
             write_terminal_session,
@@ -1536,6 +1543,8 @@ pub fn run() {
             speech::tts_synthesize,
             agent::agent_prepare,
             agent::agent_route,
+            semantic::agent_semantic,
+            agent::list_skills,
             agent::agent_tool,
             agent::agent_finish,
             mcp::mcp_overview,

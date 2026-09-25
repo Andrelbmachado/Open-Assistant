@@ -4,6 +4,8 @@ export interface ProviderConfig {
   kind: "builtin" | "custom";
   baseUrl?: string;
   defaultModel: string;
+  /** Outros modelos oferecidos no seletor (o padrão vem primeiro). */
+  models?: string[];
   enabled?: boolean;
 }
 

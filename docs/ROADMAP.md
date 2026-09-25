@@ -55,10 +55,10 @@
 - [x] Botão de trocar tipo de área sem a caixa larga atrás
 - [x] Conversas nomeadas pela 1ª pergunta (refinado pelo modelo local); conversa vazia abandonada é apagada
 
-## 8. PRÓXIMA SESSÃO — pedidos do usuário (2026-09-25, ainda não feitos)
-Ordem sugerida: 8.1 → 8.2 → 8.3 → 8.4 → 8.5 → 8.6 → 8.7.
+## 8. Pedidos do usuário (2026-09-25) — concluído na sessão 3
+Resumo do que foi feito está em "Resultados verificados (sessão 3)" abaixo; o texto original de cada pedido ficou aqui.
 
-- [ ] **8.1 App diz que "não consegue abrir o PowerShell"** (bug relatado com print da resposta).
+- [x] **8.1 App diz que "não consegue abrir o PowerShell"** (bug relatado com print da resposta).
   Causa provável (não verificada): o botão **Controlar o PC** estava desligado; aí a mensagem vai para o chat
   comum (`askAI`), cujo prompt (`aiService.ts::SYSTEM_PROMPT`) não fala de ferramentas, e o modelo responde que é só texto.
   Fazer: (a) confirmar reproduzindo com o botão desligado/ligado; (b) rodar o roteador de intents (`agent_route`)
@@ -66,30 +66,59 @@ Ordem sugerida: 8.1 → 8.2 → 8.3 → 8.4 → 8.5 → 8.6 → 8.7.
   acesso) ou sugerir ligar o modo; (c) quando o pedido parecer ação no PC e o modo estiver desligado, responder com um
   botão "Ligar Controlar o PC e executar"; (d) ajustar o SYSTEM_PROMPT do chat comum para não afirmar que não tem
   ferramentas e explicar o botão; (e) garantir alias "abre o powershell"/"abre o terminal" → `open_app` wt/powershell.
-- [ ] **8.2 Botão Copiar com confirmação**: ao copiar (resposta da IA e mensagem do usuário) o ícone vira ✓ por 3 s
+- [x] **8.2 Botão Copiar com confirmação**: ao copiar (resposta da IA e mensagem do usuário) o ícone vira ✓ por 3 s
   e volta a ser Copiar. Hoje só há Copiar nas respostas (`ChatView.tsx`, `.msg-tools`) e no bloco de código; adicionar
   também nas mensagens do usuário. Estado por mensagem (id copiado + timeout 3000 ms).
-- [ ] **8.3 Memória da IA** (ex.: "não use emojis" deve valer nas próximas conversas).
+- [x] **8.3 Memória da IA** (ex.: "não use emojis" deve valer nas próximas conversas).
   Detectar pedidos de preferência ("não use…", "sempre…", "me chame de…", "lembre que…") e salvar como fatos curtos;
   injetar no prompt de sistema de TODAS as conversas (chat comum, agente e nuvem). Guardar no store (localStorage) ou
   em `skills/controle-do-windows/memoria/usuario.md` (já existe; hoje só o agente lê). Mostrar "Memória atualizada"
   discreto na resposta. Permitir apagar itens.
-- [ ] **8.4 Configurações › Memória** (memórias básicas): nome/como quer ser chamado, estilo de conversa (formal,
+- [x] **8.4 Configurações › Memória** (memórias básicas): nome/como quer ser chamado, estilo de conversa (formal,
   direto, sem emojis…), idioma, fatos livres; lista das memórias aprendidas (8.3) com editar/apagar. Tudo entra no
   prompt de sistema automaticamente (`systemPromptFor` em aiService.ts + `agent_prepare` em agent.rs + cloud).
-- [ ] **8.5 Embeddings para pedidos comuns** (abrir programas e sites sem gastar tokens do modelo).
+- [x] **8.5 Embeddings para pedidos comuns** (abrir programas e sites sem gastar tokens do modelo).
   Hoje o roteador (`agent.rs::route`) só casa alias exato. Adicionar camada semântica na CPU (desenho do pacote
   local-pc-agent: embed ≥ 0,82 executa; 0,65–0,82 o modelo escolhe entre 3; < 0,65 conversa). Opções: modelo de
   embedding do Ollama (`nomic-embed-text`/`bge-m3`, via Rust) ou ONNX no sherpa/ort. Vetorizar só id + descrição +
   aliases + exemplos do `intents.yaml` (cache em disco); incluir apps instalados (`Get-StartApps`) e sites comuns.
-- [ ] **8.6 "/" invoca skills e "@" invoca conectores MCP** no compositor: popover com autocomplete ao digitar `/`
+- [x] **8.6 "/" invoca skills e "@" invoca conectores MCP** no compositor: popover com autocomplete ao digitar `/`
   (skills: controle-do-windows e futuras) e `@` (conectores MCP ligados + apps). Item escolhido vira "chip" na mensagem
   e força o uso: `/skill` → carrega a skill no prompt e liga o modo agente para aquela mensagem; `@mcp` → expõe só as
   ferramentas daquele conector. Navegação por teclado (↑↓ Enter Esc).
-- [ ] **8.7 Indicador de conexão no ícone de computador** (rodapé da barra lateral, ao lado do perfil): linha fina
+- [x] **8.7 Indicador de conexão no ícone de computador** (rodapé da barra lateral, ao lado do perfil): linha fina
   com ponto verde abaixo do ícone quando a IA local está OK (Ollama online e modelo escolhido instalado — usar
   `useLocalModels().ollama === "online"`); cinza/vermelho quando offline, com tooltip explicando. Para modelo em nuvem:
   verde se há chave (`has_credential`).
+
+- [x] **8.8 Seletor de modelos** mostra modelos com chave de API (vários por provedor); sem chave = uma linha inativa por provedor que leva a Provedores.
+- [x] **8.9 Google Gemini** em Provedores (chave `AIza…`, botão "Criar chave no site"), modelos `gemini-2.5-flash` e `gemini-2.5-pro`.
+
+## Resultados verificados (sessão 3, 2026-09-25)
+- Causa do "não consigo abrir o PowerShell": com "Controlar o PC" desligado a mensagem ia para o chat comum. Agora
+  "abre a calculadora" com o modo desligado abriu a calculadora pela ação rápida (0 tokens, rodapé "Ação rápida · sem tokens").
+- Camada semântica (`semantic.rs`) com os apps reais do PC: "abre o word/excel/figma/paint/gerenciador de tarefas",
+  "abre powershell" (sem "o"), "entra no youtube" → executa (score 0,95–1,00); "abre o spotifi" → sugestão (0,71);
+  "como abrir o powershell?", "abre o chrome e pesquisa…", "spotify" sozinho → conversa normal.
+- "clica no botão iniciar do windows" com o modo desligado → oferta "Ligar Controlar o PC e executar"; clicar liga o modo e o
+  agente roda na mesma mensagem ("executa o comando Get-Date…" → "A data atual é: sexta-feira, 25 de setembro de 2026.").
+- Memória: "não use emojis nas conversas e me chame de Dé…" → resposta "Oi, Dé.", selo "Memória atualizada", fatos em Configurações › Memória.
+- Copiar: ✓ verde ao clicar (resposta, mensagem do usuário e bloco de código) e volta ao ícone depois de 3 s.
+- "/" lista a skill `controle-do-windows`; "@" lista os 9 conectores do `mcp.json`; "@fetch resuma https://example.com" → `mcp__fetch__fetch` em 4 s.
+- Indicador verde sob o ícone de computador (Ollama online + qwen3.5:9b instalado); amarelo verificando; vermelho com o motivo no tooltip.
+- MCP: com 9 conectores a 1ª tarefa levava 132 s (início em série + um conector lento até o limite de 120 s) e o prompt
+  tinha centenas de ferramentas (resposta sem sentido). Agora: início em paralelo, espera máx. 15 s (1ª tarefa em 18 s) e
+  só `mcp_tools`/`mcp_call` quando passam de 12 ferramentas.
+- Testes: 127 (vitest) + 51 (cargo).
+
+## Próximos passos sugeridos (sessão 4)
+- Testar Gemini/OpenAI/Anthropic com chave real (o código segue o formato oficial, mas não há chave salva para testar).
+- Camada semântica com modelo de embedding de verdade (ex.: `embeddinggemma`/`nomic-embed-text` no Ollama, na CPU) como
+  segunda opinião quando o trigrama der só "sugestão"; hoje os trigramas cobrem nomes e erros de digitação, não sinônimos.
+- Memória: deixar o próprio modelo propor memórias ("quer que eu lembre disso?") além das frases fixas.
+- "/" com mais skills (ex.: uma skill "construtor de apps") e "@" também para apps do menu Iniciar.
+- (Feito) O intent `run_command` do catálogo não existia no `dispatch.ps1`: agora "executa o comando X" roda X pelo
+  `run_command` (mesma política de bloqueio/confirmação) com o comando tirado do texto original.
 
 ## Resultados verificados (2026-09-25)
 - Agente com qwen3.5:9b: "abre o chrome, clica na URL, digita g1.globo.com, enter e diz a manchete" → 4 passos, 11 s, manchete correta.

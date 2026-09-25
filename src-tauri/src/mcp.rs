@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{BufRead, BufReader, Write},
     path::PathBuf,
@@ -19,7 +19,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -61,6 +61,8 @@ struct Running {
 pub struct McpState {
     servers: Mutex<HashMap<String, Running>>,
     errors: Mutex<HashMap<String, String>>,
+    /// Servidores sendo ligados agora (evita ligar o mesmo duas vezes).
+    starting: Mutex<HashSet<String>>,
 }
 
 pub fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -155,31 +157,94 @@ pub fn exposed_name(server: &str, tool: &str) -> String {
     format!("mcp__{}__{}", clean(server), clean(tool))
 }
 
-/// Liga os servidores habilitados que ainda não estão rodando.
-pub fn ensure_started(app: &AppHandle) {
+/// Na 1ª tarefa o agente espera no máximo isto; conectores lentos terminam de ligar em segundo plano.
+const START_WAIT: Duration = Duration::from_secs(15);
+
+/// Liga, em paralelo, os servidores habilitados que ainda não estão rodando e espera até `START_WAIT`.
+/// Devolve os que ainda estão ligando (entram na próxima tarefa). Em série, 9 conectores via
+/// npx/uvx levavam minutos — e um que travasse segurava todos até o `START_TIMEOUT`.
+pub fn ensure_started(app: &AppHandle) -> Vec<String> {
     let config = load_config(app);
     let state = app.state::<McpState>();
-    for (name, server) in config.mcp_servers.iter().filter(|(_, server)| !server.disabled) {
-        let running = state.servers.lock().map(|servers| servers.contains_key(name)).unwrap_or(true);
-        if running {
+    let mut waiting = Vec::new();
+    for (name, server) in config.mcp_servers.into_iter().filter(|(_, server)| !server.disabled) {
+        if state.servers.lock().map(|servers| servers.contains_key(&name)).unwrap_or(true) {
             continue;
         }
-        match start(name, server) {
-            Ok(running) => {
-                if let Ok(mut servers) = state.servers.lock() {
-                    servers.insert(name.clone(), running);
-                }
-                if let Ok(mut errors) = state.errors.lock() {
-                    errors.remove(name);
-                }
-            }
-            Err(error) => {
-                if let Ok(mut errors) = state.errors.lock() {
-                    errors.insert(name.clone(), error);
-                }
-            }
+        waiting.push(name.clone());
+        // Já está ligando por uma chamada anterior: só espera junto.
+        let fresh = state.starting.lock().map(|mut starting| starting.insert(name.clone())).unwrap_or(false);
+        if !fresh {
+            continue;
         }
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let result = start(&name, &server);
+            let state = app.state::<McpState>();
+            match result {
+                Ok(running) => {
+                    if let Ok(mut servers) = state.servers.lock() {
+                        servers.insert(name.clone(), running);
+                    }
+                    if let Ok(mut errors) = state.errors.lock() {
+                        errors.remove(&name);
+                    }
+                }
+                Err(error) => {
+                    if let Ok(mut errors) = state.errors.lock() {
+                        errors.insert(name.clone(), error);
+                    }
+                }
+            }
+            if let Ok(mut starting) = state.starting.lock() {
+                starting.remove(&name);
+            };
+        });
     }
+    let deadline = Instant::now() + START_WAIT;
+    loop {
+        let pending: Vec<String> = waiting.iter().filter(|name| state.starting.lock().map(|starting| starting.contains(*name)).unwrap_or(false)).cloned().collect();
+        if pending.is_empty() || Instant::now() >= deadline {
+            return pending;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
+/// Conectores rodando e quantas ferramentas cada um tem (para o prompt do agente).
+pub fn server_summaries(app: &AppHandle) -> Vec<(String, usize)> {
+    let state = app.state::<McpState>();
+    let Ok(servers) = state.servers.lock() else { return Vec::new() };
+    let mut list: Vec<(String, usize)> = servers.iter().map(|(name, running)| (name.clone(), running.tools.len())).collect();
+    list.sort();
+    list
+}
+
+/// Lista compacta das ferramentas de um conector: nome, descrição curta e parâmetros (`nome*: tipo`).
+pub fn list_tools_text(app: &AppHandle, server: &str) -> Result<String, String> {
+    let state = app.state::<McpState>();
+    let servers = state.servers.lock().map_err(|_| "estado MCP indisponível")?;
+    let running = servers
+        .get(server)
+        .ok_or_else(|| format!("Conector \"{server}\" não está rodando. Ligados: {}.", servers.keys().cloned().collect::<Vec<_>>().join(", ")))?;
+    let mut lines = Vec::new();
+    for tool in &running.tools {
+        let Some(name) = tool.get("name").and_then(Value::as_str) else { continue };
+        let description: String = tool.get("description").and_then(Value::as_str).unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect();
+        let schema = tool.get("inputSchema").cloned().unwrap_or_default();
+        let required: Vec<&str> = schema["required"].as_array().map(|items| items.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        let params: Vec<String> = schema["properties"]
+            .as_object()
+            .map(|properties| {
+                properties
+                    .iter()
+                    .map(|(key, value)| format!("{key}{}: {}", if required.contains(&key.as_str()) { "*" } else { "" }, value["type"].as_str().unwrap_or("any")))
+                    .collect()
+            })
+            .unwrap_or_default();
+        lines.push(format!("- {name}({}) — {description}", params.join(", ")));
+    }
+    Ok(format!("Ferramentas de {server} (* = obrigatório). Chame com mcp_call.\n{}", lines.join("\n")))
 }
 
 /// Ferramentas MCP no formato do Ollama. Descrições são cortadas: cada token de prompt pesa num 9B.
@@ -348,7 +413,11 @@ pub fn mcp_save_config(app: AppHandle, state: State<McpState>, json_text: String
 /// Inicia os conectores habilitados que estão parados.
 #[tauri::command]
 pub async fn mcp_start(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || ensure_started(&app)).await.map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_started(&app);
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 /// Para um conector (mata a árvore de processos).

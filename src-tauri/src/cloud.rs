@@ -21,6 +21,7 @@ fn openai_compatible_base(provider_id: &str) -> Option<&'static str> {
         "perplexity" => "https://api.perplexity.ai",
         "together-ai" => "https://api.together.xyz/v1",
         "fireworks" => "https://api.fireworks.ai/inference/v1",
+        "google" => "https://generativelanguage.googleapis.com/v1beta/openai",
         _ => return None,
     })
 }
@@ -60,6 +61,15 @@ fn openai_messages(messages: &[ChatMessageInput]) -> Vec<Value> {
             None => json!({ "role": message.role, "content": message.content }),
         })
         .collect()
+}
+
+/// Corpo do `/chat/completions`; o Gemini não precisa do `stream_options` (manda `usage` no fim).
+fn openai_body(provider_id: &str, model: &str, messages: &[ChatMessageInput]) -> Value {
+    let mut body = json!({ "model": model, "messages": openai_messages(messages), "stream": true });
+    if provider_id != "google" {
+        body["stream_options"] = json!({ "include_usage": true });
+    }
+    body
 }
 
 fn anthropic_body(model: &str, messages: &[ChatMessageInput]) -> Value {
@@ -130,7 +140,7 @@ pub fn run_chat(
         agent
             .post(&format!("{base}/chat/completions"))
             .set("Authorization", &format!("Bearer {key}"))
-            .send_json(json!({ "model": model, "messages": openai_messages(messages), "stream": true, "stream_options": { "include_usage": true } }))
+            .send_json(openai_body(provider_id, model, messages))
     }
     .map_err(http_error)?;
 
@@ -210,7 +220,7 @@ mod tests {
 
     #[test]
     fn known_providers_have_https_endpoints() {
-        for id in ["openai", "deepseek", "perplexity", "together-ai", "fireworks"] {
+        for id in ["openai", "deepseek", "perplexity", "together-ai", "fireworks", "google"] {
             assert!(openai_compatible_base(id).unwrap().starts_with("https://"));
         }
         assert!(openai_compatible_base("anthropic").is_none());

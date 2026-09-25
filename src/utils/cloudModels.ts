@@ -6,18 +6,38 @@ import { createProviderId, type ProviderConfig } from "./providers";
 
 export const CLOUD_MODEL_PREFIX = "Nuvem: ";
 
-/** Provedores internos e o modelo usado por padrão em cada um. */
+/** Provedores internos, o modelo padrão e os outros modelos oferecidos no seletor. */
 export const BUILTIN_PROVIDERS: ProviderConfig[] = [
-  { name: "OpenAI", defaultModel: "gpt-5" },
-  { name: "Anthropic", defaultModel: "claude-sonnet-5" },
-  { name: "DeepSeek", defaultModel: "deepseek-chat" },
-  { name: "Perplexity", defaultModel: "sonar" },
-  { name: "Together AI", defaultModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
-  { name: "Fireworks", defaultModel: "accounts/fireworks/models/llama-v3p3-70b-instruct" },
-].map(({ name, defaultModel }) => ({ id: createProviderId(name), name, kind: "builtin", defaultModel }));
+  { name: "OpenAI", models: ["gpt-5", "gpt-5-mini"] },
+  { name: "Anthropic", models: ["claude-sonnet-5", "claude-opus-5-5", "claude-haiku-4-5"] },
+  { name: "Google", models: ["gemini-2.5-flash", "gemini-2.5-pro"] },
+  { name: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] },
+  { name: "Perplexity", models: ["sonar", "sonar-pro"] },
+  { name: "Together AI", models: ["meta-llama/Llama-3.3-70B-Instruct-Turbo"] },
+  { name: "Fireworks", models: ["accounts/fireworks/models/llama-v3p3-70b-instruct"] },
+].map(({ name, models }) => ({ id: createProviderId(name), name, kind: "builtin", defaultModel: models[0], models }));
 
-/** Nome amigável no seletor: "ChatGPT (GPT-5)", "Claude (Sonnet 5)". */
-export const CLOUD_PRODUCT_NAMES: Record<string, string> = { openai: "ChatGPT", anthropic: "Claude", deepseek: "DeepSeek", perplexity: "Perplexity", "together-ai": "Together AI", fireworks: "Fireworks" };
+/** Nome amigável no seletor: "ChatGPT · gpt-5", "Gemini · gemini-2.5-flash". */
+export const CLOUD_PRODUCT_NAMES: Record<string, string> = { openai: "ChatGPT", anthropic: "Claude", google: "Gemini", deepseek: "DeepSeek", perplexity: "Perplexity", "together-ai": "Together AI", fireworks: "Fireworks" };
+
+/** Formato da chave, para o placeholder do campo em Provedores. */
+export const KEY_PLACEHOLDERS: Record<string, string> = { openai: "sk-proj-••••••••••••", anthropic: "sk-ant-••••••••••••", google: "AIza••••••••••••••••", deepseek: "sk-••••••••••••••••", perplexity: "pplx-••••••••••••" };
+
+/** Página onde o usuário cria a chave de cada provedor. */
+export const KEY_PAGES: Record<string, string> = {
+  openai: "https://platform.openai.com/api-keys",
+  anthropic: "https://console.anthropic.com/settings/keys",
+  google: "https://aistudio.google.com/apikey",
+  deepseek: "https://platform.deepseek.com/api_keys",
+  perplexity: "https://www.perplexity.ai/settings/api",
+  "together-ai": "https://api.together.ai/settings/api-keys",
+  fireworks: "https://fireworks.ai/account/api-keys",
+};
+
+/** Modelos de um provedor, sem repetição, com o padrão primeiro. */
+export function providerModels(provider: ProviderConfig): string[] {
+  return [...new Set([provider.defaultModel, ...(provider.models ?? [])].filter(Boolean))];
+}
 
 export function cloudModelValue(providerId: string, model: string): string {
   return `${CLOUD_MODEL_PREFIX}${providerId}/${model}`;

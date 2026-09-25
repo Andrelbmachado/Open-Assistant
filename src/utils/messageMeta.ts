@@ -13,6 +13,9 @@ export function modelDisplayName(model: string | undefined, source?: string): st
 
 /** Rodapé da resposta: "Qwen3.5 9B · 312 tokens · 61 tok/s". */
 export function replyFooter(model: string | undefined, source: string | undefined, tokens?: number, tokensPerSecond?: number): string {
+  // Ações reconhecidas sem modelo ("abre a calculadora") e avisos do app não gastam tokens.
+  if (source?.startsWith("Catálogo")) return "Ação rápida · sem tokens";
+  if (source === "Open Assistant") return "Open Assistant · sem tokens";
   const parts = [modelDisplayName(model, source)];
   if (tokens) parts.push(`${formatTokenCount(tokens)} tokens`);
   if (tokensPerSecond) parts.push(`${Math.round(tokensPerSecond)} tok/s`);

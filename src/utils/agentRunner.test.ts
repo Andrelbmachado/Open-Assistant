@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { describeToolCall, keepLatestImage, parseArguments, runAgent, type AgentRunOptions, type AgentStep } from "./agentRunner";
+import { catalogLabel, catalogReply, describeToolCall, keepLatestImage, parseArguments, resetAgentSetup, runAgent, type AgentRunOptions, type AgentStep } from "./agentRunner";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const invokeMock = vi.mocked(invoke);
@@ -54,8 +54,44 @@ describe("runAgent", () => {
       return undefined;
     });
     const result = await runAgent(options({ userText: "abre o chrome" }));
-    expect(result.text).toBe("OK: Google Chrome aberto");
+    expect(result.text).toBe("Abri o navegador.");
     expect(invokeMock.mock.calls.map(([command]) => command)).not.toContain("ollama_chat");
+  });
+
+  it("runs a semantic match and hints the model with near misses", async () => {
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "agent_route") return null;
+      if (command === "agent_semantic") return { action: "run", candidates: [{ id: "open_app", risk: "safe", slots: { app: "wt" }, label: "Abrir terminal", score: 1 }] };
+      if (command === "agent_tool") return { status: "ok", text: "OK: wt" };
+      return undefined;
+    });
+    expect((await runAgent(options({ userText: "abre powershell" }))).text).toBe("Abri terminal.");
+
+    const sent: unknown[] = [];
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === "agent_route") return null;
+      if (command === "agent_semantic") return { action: "suggest", candidates: [{ id: "open_app", risk: "safe", slots: { app: "spotify" }, label: "Abrir spotify", score: 0.7 }] };
+      if (command === "agent_prepare") return { systemPrompt: "skill", tools: [], skillDir: "x" };
+      if (command === "ollama_chat") { sent.push(args); return { model: "qwen3.5:9b", content: "Qual deles?", thinking: "", cancelled: false, toolCalls: [] }; }
+      return undefined;
+    });
+    await runAgent(options({ userText: "abre o spotifi", memory: " Memória: sem emojis" }));
+    const messages = (sent[0] as { messages: { role: string; content: string }[] }).messages;
+    expect(messages[0].content).toContain("Memória: sem emojis");
+    expect(messages[messages.length - 1].content).toContain('open_app {"app":"spotify"}');
+  });
+
+  it("limits the tools to the chosen @connector", async () => {
+    const sent: { options: { tools: { function: { name: string } }[] } }[] = [];
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === "agent_prepare") return { systemPrompt: "skill", tools: [{ function: { name: "look" } }, { function: { name: "ask_user" } }, { function: { name: "mcp__fetch__fetch" } }], skillDir: "x" };
+      if (command === "ollama_chat") { sent.push(args as never); return { model: "qwen3.5:9b", content: "ok", thinking: "", cancelled: false, toolCalls: [] }; }
+      return undefined;
+    });
+    resetAgentSetup();
+    await runAgent(options({ userText: "resuma example.com", mcpServer: "fetch" }));
+    expect(sent[0].options.tools.map((tool) => tool.function.name)).toEqual(["ask_user", "mcp__fetch__fetch"]);
+    expect(invokeMock.mock.calls.map(([command]) => command)).not.toContain("agent_route");
   });
 
   it("loops through tool calls, asks for confirmation and returns the final answer", async () => {
@@ -97,5 +133,15 @@ describe("runAgent", () => {
   it("refuses BitNet, which has no tool support", async () => {
     invokeMock.mockImplementation(async (command: string) => (command === "agent_route" ? null : undefined));
     await expect(runAgent(options({ model: "BitNet: bitnet-b1.58-2b-4t" }))).rejects.toThrow("ferramentas");
+  });
+});
+
+describe("catalog replies", () => {
+  it("names quick actions like a person would", () => {
+    expect(catalogLabel("open_app", { app: "calculadora" })).toBe("Abrir calculadora");
+    expect(catalogLabel("open_url", { url: "https://www.youtube.com/" })).toBe("Abrir youtube.com");
+    expect(catalogLabel("open_app", { app: "shell:AppsFolder\\Adobe.Photoshop" })).toBe("Abrir o app");
+    expect(catalogReply("Abrir calculadora", "OK: calc")).toBe("Abri calculadora.");
+    expect(catalogReply("Ação screenshot", "OK: print salvo")).toBe("Pronto: print salvo");
   });
 });

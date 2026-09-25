@@ -363,3 +363,91 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 /* Rosto do assistente sem caixa atrás, tanto no modo fala quanto na prévia. */
 .face-preview-stage { background: transparent !important; border-color: transparent !important; box-shadow: none !important; }
 .voice-stage .orbital-canvas { background: transparent; }
+
+/* Rodada 2026-09-25 (3) ------------------------------------------------------------ */
+/* Copiar com confirmação (✓ por 3 s), nas respostas, nas mensagens do usuário e nos blocos de código. */
+.copy-button.copied, .msg-tools .copy-button.copied { color: #6fdc8c !important; }
+.msg-user-tools { height: 26px; display: flex; justify-content: flex-end; margin-top: 3px; opacity: 0; transition: opacity 150ms ease; }
+.msg:hover .msg-user-tools, .msg-user-tools:focus-within, .msg-user-tools:has(.copied) { opacity: 1; }
+.msg-tools:has(.copied) { opacity: 1; }
+.msg-user-tools button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--faint); cursor: pointer; }
+.msg-user-tools button:hover { background: rgba(255, 255, 255, .07); color: var(--text); }
+.code-copy { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 11px; }
+
+/* Oferta "Ligar Controlar o PC e executar" quando o modo está desligado. */
+.action-offer { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.action-offer button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 9px; font-size: 12px; }
+.action-offer .flat-button { border: 1px solid rgba(255, 255, 255, .1); background: rgba(255, 255, 255, .04); color: var(--text); }
+.action-offer .flat-button:hover { background: rgba(255, 255, 255, .09); }
+.action-offer button:disabled { opacity: .5; cursor: default; }
+
+/* "Memória atualizada": discreto, abre Configurações › Memória. */
+.memory-note { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 3px 9px; border: 1px solid rgba(156, 194, 255, .2); border-radius: 99px; background: rgba(156, 194, 255, .06); color: #9cc2ff; font-size: 10.5px; cursor: pointer; }
+.memory-note:hover { background: rgba(156, 194, 255, .12); }
+
+/* "/" skills e "@" conectores: menu acima do compositor e chips. */
+.mention-popover { left: 10px; right: auto; bottom: calc(100% + 6px); width: min(420px, calc(100% - 20px)); max-height: 320px; overflow-y: auto; }
+.mention-popover button { height: auto !important; min-height: 40px; display: flex; align-items: center; gap: 9px; padding: 6px 8px !important; border: 0; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; }
+.mention-popover button.active { background: rgba(255, 255, 255, .07); color: var(--text); }
+.mention-popover button.disabled { opacity: .45; cursor: default; }
+.mention-icon { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; background: rgba(255, 255, 255, .06); color: #c9c9ce; }
+.mention-copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mention-copy b { color: var(--text); font-size: 12px; font-weight: 600; }
+.mention-copy small { overflow: hidden; color: var(--faint); font-size: 10.5px; white-space: nowrap; text-overflow: ellipsis; }
+.mention-popover .mention-manage { min-height: 30px; margin-top: 4px; color: var(--muted); font-size: 11px; }
+.invocation-chip { display: inline-flex; align-items: center; gap: 4px; }
+.attachment-chips .invocation-chip { max-width: 240px; padding: 4px 8px; border-color: rgba(124, 92, 255, .35); background: rgba(124, 92, 255, .12); color: #cfc6ff; font-size: 11px; }
+.attachment-chips .invocation-chip.mcp { border-color: rgba(111, 220, 140, .3); background: rgba(111, 220, 140, .09); color: #a9ecbb; }
+.msg-invocations { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.msg-invocations .invocation-chip { padding: 1px 7px; border-radius: 99px; background: rgba(124, 92, 255, .2); color: #d9d2ff; font-size: 10.5px; }
+.msg-invocations .invocation-chip.mcp { background: rgba(111, 220, 140, .14); color: #b8f0c7; }
+
+/* Indicador de conexão sob o ícone de computador/nuvem: linha fina com ponto (verde = IA funcionando). */
+.runtime-location { position: relative; }
+.connection-line { position: absolute; left: 4px; right: 4px; bottom: 0; height: 2px; border-radius: 2px; background: rgba(255, 255, 255, .1); }
+.connection-line b { position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; border-radius: 50%; transform: translate(-50%, -50%); background: #6d6d75; }
+.connection-ok .connection-line { background: rgba(74, 222, 128, .35); }
+.connection-ok .connection-line b { background: #4ade80; box-shadow: 0 0 6px rgba(74, 222, 128, .8); }
+.connection-checking .connection-line b { background: #e0b74f; animation: connection-pulse 1.2s ease-in-out infinite; }
+.connection-error .connection-line { background: rgba(248, 113, 113, .3); }
+.connection-error .connection-line b { background: #f87171; }
+@keyframes connection-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .connection-checking .connection-line b { animation: none; } }
+
+/* Configurações › Memória. */
+.memory-settings { display: flex; flex-direction: column; gap: 12px; }
+.memory-card { display: flex; flex-direction: column; gap: 10px; }
+.memory-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.memory-fields label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 11px; }
+.memory-card input, .memory-card textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: #161617; color: var(--text); font: inherit; font-size: 12.5px; }
+.memory-card textarea { resize: vertical; }
+.memory-card input:focus, .memory-card textarea:focus { outline: none; border-color: rgba(156, 194, 255, .45); }
+.memory-styles { display: flex; flex-wrap: wrap; gap: 6px; }
+.memory-styles button { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 11px; border: 1px solid var(--border); border-radius: 99px; background: transparent; color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.memory-styles button.active { border-color: rgba(156, 194, 255, .4); background: #283047; color: #fff; }
+.memory-card-head { display: flex; align-items: center; justify-content: space-between; }
+.memory-learn { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.memory-card .memory-learn input { width: auto; }
+.memory-hint { color: var(--faint); font-size: 10.5px; }
+.memory-facts { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.memory-facts li { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 5px 6px 5px 10px; border-radius: 8px; background: rgba(255, 255, 255, .03); }
+.memory-facts li > span { flex: 1; display: flex; flex-direction: column; color: var(--text); font-size: 12.5px; }
+.memory-facts li > span small { color: var(--faint); font-size: 10px; }
+.memory-facts li > input { flex: 1; }
+.memory-facts .memory-empty { gap: 7px; color: var(--faint); font-size: 12px; background: transparent; }
+.memory-fact-actions { display: flex; gap: 2px; }
+.memory-fact-actions button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--faint); cursor: pointer; }
+.memory-fact-actions button:hover { background: rgba(255, 255, 255, .07); color: var(--text); }
+.memory-add { display: flex; gap: 8px; }
+.memory-add .flat-button { flex: none; display: inline-flex; align-items: center; gap: 5px; }
+.memory-preview summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+.memory-preview pre { margin: 8px 0 0; color: var(--muted); font: 11px/1.55 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; }
+.credential-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.invocation-chip button { display: grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; opacity: .7; cursor: pointer; }
+.invocation-chip button:hover { background: rgba(255, 255, 255, .12); opacity: 1; }
+.setting-card.memory-card { flex-direction: column; align-items: stretch; justify-content: flex-start; }
+.memory-card > label, .memory-card-head > label:first-child { color: var(--text); font-size: 12px; font-weight: 600; }
+.memory-card .memory-learn { font-size: 11.5px; font-weight: 400; }
+.setting-card.memory-preview { display: block; min-height: 0; }
+.model-picker .model-row-name { min-width: 0; overflow: hidden; }
+.model-picker .model-row-name code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
