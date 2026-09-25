@@ -52,10 +52,12 @@ interface OllamaChatDelta extends AIDelta {
   requestId: string;
 }
 
+/** Erro mostrado quando o chat não tem modelo local escolhido. */
 export const NO_LOCAL_MODEL_ERROR = "Nenhum modelo local selecionado. Baixe um modelo em Configurações › Modelos locais ou escolha um modelo instalado em + › Modelo de IA.";
 
 const SYSTEM_PROMPT = "Você é o Open Assistant, um assistente pessoal que roda localmente no computador Windows do usuário. Responda no idioma do usuário (por padrão, português do Brasil), de forma clara, direta e útil.";
 
+/** Extrai o id do Ollama de `Ollama: <id>` (undefined para outros formatos). */
 export function ollamaModelId(model: string): string | undefined {
   if (!model.startsWith(OLLAMA_MODEL_PREFIX)) return undefined;
   return model.slice(OLLAMA_MODEL_PREFIX.length).trim() || undefined;
@@ -100,6 +102,7 @@ async function simulateQAReply(model: string, messages: AIMessage[], requestId: 
   return { ...reply, thinking: thinking.trim() || undefined, thinkingTokens };
 }
 
+/** Envia a conversa ao modelo local (Ollama ou BitNet) com streaming; sem fallback para nuvem. */
 export async function askAI(model: string, messages: AIMessage[], options: AskOptions = {}): Promise<AIReply> {
   const requestId = options.requestId ?? crypto.randomUUID();
   if (isQAOffline()) return simulateQAReply(model, messages, requestId, options);
@@ -153,6 +156,7 @@ async function askBitnet(messages: AIMessage[], requestId: string, options: AskO
   }
 }
 
+/** Interrompe a geração em andamento pelo id da requisição. */
 export function cancelAI(requestId: string): Promise<void> {
   if (isQAOffline()) { qaCancelled.add(requestId); return Promise.resolve(); }
   return invoke<void>("ollama_cancel_chat", { requestId }).catch(() => undefined);

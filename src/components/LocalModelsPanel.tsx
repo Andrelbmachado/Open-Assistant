@@ -24,6 +24,7 @@ function PullBar({ pull }: { pull: PullProgress }) {
   </div>;
 }
 
+/** Aba "Modelos locais": estado do Ollama, hardware e download/uso de modelos do catálogo. */
 export function LocalModelsPanel() {
   const { state, dispatch } = useStore();
   const local = useLocalModels();

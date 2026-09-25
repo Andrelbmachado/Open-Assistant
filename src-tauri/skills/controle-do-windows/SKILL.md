@@ -28,6 +28,8 @@ Por quê: cada print custa ~1000 tokens e deixa o modelo lento; uma lista de ele
 4. Atalhos são mais confiáveis que cliques: `press_keys` com `ctrl+l` (barra de endereço), `ctrl+t`, `alt+tab`, `win+r`…
 5. Depois de cada ação que muda a tela, **confira** com `look` antes de declarar sucesso.
 6. Se algo não aparece, role (`scroll`) ou peça um print (`look` both). No máximo 3 tentativas no mesmo alvo; depois explique ao usuário o que viu.
+7. Se `look` mostrar uma janela diferente da esperada, use `focus_window` com o nome do app. Nunca feche janelas nem mate processos (Explorer, Chrome…) para "arrumar" a tela.
+8. Para *ler* o conteúdo de um site aberto, `read_url` com o endereço costuma ser mais rápido e completo que prints.
 
 Exemplo — "entra no site do g1":
 `run_intent open_browser` → `press_keys ctrl+l` → `type_text "g1.globo.com" enter:true` → `look elements` → responder "Pronto, o g1 está aberto."

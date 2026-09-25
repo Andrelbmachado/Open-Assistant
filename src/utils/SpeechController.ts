@@ -21,10 +21,12 @@ export function transcribe(samples: Float32Array, sampleRate: number, modelId: s
   return invoke<Transcription>("asr_transcribe", bytes, { headers: { "x-model": modelId, "x-sample-rate": String(Math.round(sampleRate)), "x-language": language } });
 }
 
+/** Gera WAV com uma voz Piper instalada (`tts_synthesize`). */
 export function synthesize(voiceId: string, text: string, speed = 1): Promise<ArrayBuffer> {
   return invoke<ArrayBuffer>("tts_synthesize", { voiceId, text, speed });
 }
 
+/** Fala respostas (voz do Windows ou Piper) com eventos de início/fim/volume para o rosto. */
 export class SpeechController {
   private stopLocal: (() => void) | null = null;
 

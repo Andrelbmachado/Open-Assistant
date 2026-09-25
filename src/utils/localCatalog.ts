@@ -1,10 +1,12 @@
 import type { HardwareProfile } from "./localModels";
 
+/** Prefixo dos modelos do Ollama no campo `model` dos chats. */
 export const OLLAMA_MODEL_PREFIX = "Ollama: ";
 /** Modelo de 1 bit da Microsoft, servido pelo bitnet.cpp (não pelo Ollama). */
 export const BITNET_MODEL_PREFIX = "BitNet: ";
 export const BITNET_MODEL = `${BITNET_MODEL_PREFIX}bitnet-b1.58-2b-4t`;
 
+/** O modelo roda neste PC (Ollama ou BitNet)? */
 export function isLocalChatModel(model: string | undefined): model is string {
   return Boolean(model && (model.startsWith(OLLAMA_MODEL_PREFIX) || model.startsWith(BITNET_MODEL_PREFIX)));
 }
@@ -38,6 +40,7 @@ export interface LocalModelOption {
   runsOn?: "gpu" | "cpu";
 }
 
+/** Modelos sugeridos com o tamanho real do download (manifesto do registro do Ollama). */
 export const LOCAL_MODEL_CATALOG: CatalogModel[] = [
   { id: "qwen3.5:0.8b", family: "Qwen", label: "Qwen3.5 0.8B", sizeBytes: 1_036_046_583 },
   { id: "qwen3.5:2b", family: "Qwen", label: "Qwen3.5 2B", sizeBytes: 2_741_192_820 },
@@ -101,6 +104,7 @@ function evaluate(model: CatalogModel, hardware: HardwareProfile | undefined): P
   return { status: "incompatible", reason: `Requer cerca de ${toGb(need.gpuRamMb)} GB de RAM; este computador tem ${toGb(hardware.ramMb)} GB.` };
 }
 
+/** Junta catálogo + instalados + hardware em opções instalado/disponível/incompatível. */
 export function buildLocalModelOptions(hardware: HardwareProfile | undefined, installedModels: InstalledModel[]): LocalModelOption[] {
   const installed = new Map(installedModels.map((model) => [model.name.toLowerCase(), model]));
   const catalog: LocalModelOption[] = LOCAL_MODEL_CATALOG.map((model) => {
@@ -132,6 +136,7 @@ export function resolveChatModel(chatModel: string, installedIds: string[], pref
   return installedIds[0] ? `${OLLAMA_MODEL_PREFIX}${installedIds[0]}` : undefined;
 }
 
+/** Tamanho legível em pt-BR ("6,1 GB", "500 MB"). */
 export function formatBytes(bytes: number): string {
   if (bytes >= GB) return `${(bytes / GB).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} GB`;
   return `${Math.round(bytes / MB).toLocaleString("pt-BR")} MB`;

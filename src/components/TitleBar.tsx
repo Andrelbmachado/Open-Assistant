@@ -15,6 +15,7 @@ function handleClose() {
   try { getCurrentWindow().close().catch(() => undefined); } catch {}
 }
 
+/** Barra superior sem moldura do Windows: alternar barra lateral, logo e botões de janela. */
 export function TitleBar() {
   const { state, dispatch } = useStore();
   return (

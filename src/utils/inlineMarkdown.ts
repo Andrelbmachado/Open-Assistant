@@ -6,6 +6,7 @@ export interface InlineToken {
 
 const INLINE_PATTERN = /(\*\*[^*\n]+\*\*|`[^`\n]+`)/g;
 
+/** Quebra uma linha em texto, **negrito** e `código` para renderizar. */
 export function tokenizeInline(line: string): InlineToken[] {
   const tokens: InlineToken[] = [];
   let last = 0;
@@ -20,6 +21,7 @@ export function tokenizeInline(line: string): InlineToken[] {
   return tokens;
 }
 
+/** Texto de um título Markdown (`## Título`) ou undefined. */
 export function headingText(line: string): string | undefined {
   return line.match(/^#{1,6}\s+(.+)$/)?.[1];
 }

@@ -150,6 +150,7 @@ function step(anim: Animator, set: UniformSetter, t: number, dt: number, props: 
   set("u_pts", ...anim.pts);
 }
 
+/** Rosto "Super orbital" (shader) do modo voz. */
 export function SuperOrbital(props: SuperOrbitalProps) {
   const latest = useRef(props);
   const anim = useRef<Animator | null>(null);

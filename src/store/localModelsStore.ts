@@ -57,10 +57,12 @@ function subscribe(listener: () => void) {
   return () => { listeners.delete(listener); };
 }
 
+/** Hook: estado do Ollama, modelos instalados, hardware e downloads. */
 export function useLocalModels(): LocalModelsSnapshot {
   return useSyncExternalStore(subscribe, () => snapshot);
 }
 
+/** Leitura síncrona do estado (fora de componentes). */
 export function getLocalModelsSnapshot(): LocalModelsSnapshot {
   return snapshot;
 }
@@ -70,6 +72,7 @@ const qaInstalled: InstalledModel[] = [{ name: "qwen3.5:9b", sizeBytes: 6_594_47
 const qaTimers = new Map<string, ReturnType<typeof setInterval>>();
 
 let refreshing: Promise<void> | undefined;
+/** Relê `/api/tags` pelo Rust; marca o Ollama como online/offline. */
 export function refreshInstalledModels(): Promise<void> {
   if (refreshing) return refreshing;
   if (isQAOffline()) {
@@ -85,6 +88,7 @@ export function refreshInstalledModels(): Promise<void> {
 }
 
 let scanning: Promise<void> | undefined;
+/** Lê GPU/VRAM, RAM e disco uma vez (ou de novo com `force`). */
 export function scanHardware(force = false): Promise<void> {
   if (scanning) return scanning;
   if (!force && snapshot.hardwareStatus === "ready") return Promise.resolve();
@@ -96,6 +100,7 @@ export function scanHardware(force = false): Promise<void> {
   return scanning;
 }
 
+/** Começa (ou retoma) o download de um modelo do Ollama; progresso chega por evento. */
 export async function startPull(modelId: string): Promise<void> {
   setPull({ operationId: "", modelId, state: "running", status: "" });
   if (isQAOffline()) { simulateQAPull(modelId); return; }
@@ -107,6 +112,7 @@ export async function startPull(modelId: string): Promise<void> {
   }
 }
 
+/** Pausa (`pause`) ou cancela um download em andamento. */
 export async function stopPull(modelId: string, pause: boolean): Promise<void> {
   if (isQAOffline()) {
     clearInterval(qaTimers.get(modelId));
@@ -123,6 +129,7 @@ export async function stopPull(modelId: string, pause: boolean): Promise<void> {
   }
 }
 
+/** Esconde o cartão de progresso de um download terminado/cancelado. */
 export function dismissPull(modelId: string) {
   update((current) => {
     const pulls = { ...current.pulls };

@@ -1,4 +1,4 @@
-import { ArrowUp, AudioLines, Ban, Bot, Check, ChevronRight, Copy, Cpu, Download, FileText, Folder, Image, Mic, Play, Plus, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
+import { ArrowUp, AudioLines, Ban, Bot, Check, ChevronRight, CircleAlert, CircleCheck, CircleX, Copy, Cpu, Download, FileText, Folder, Image, LoaderCircle, Mic, MousePointer2, Play, Plus, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../store/store";
 import { refreshInstalledModels, scanHardware, startOllama, useLocalModels } from "../store/localModelsStore";
@@ -6,6 +6,7 @@ import { SpeechController, transcribe } from "../utils/SpeechController";
 import { refreshTools, useTools } from "../store/toolsStore";
 import { resolveAsrModel, resolveTtsVoice } from "../utils/toolCatalog";
 import { VoiceCapture, type CaptureResult } from "../utils/voiceCapture";
+import { runAgent, type AccessMode, type AgentStep } from "../utils/agentRunner";
 import { askAI, cancelAI, NO_LOCAL_MODEL_ERROR, ollamaModelId } from "../utils/aiService";
 import { AssistantFace } from "./AssistantFace";
 import { EffortControl } from "./EffortControl";
@@ -22,7 +23,29 @@ import { estimateTokens, modelDisplayName, replyFooter } from "../utils/messageM
 import { detectSpeechExpression, type RobotExpression } from "../utils/robotExpression";
 
 const speech = new SpeechController();
-type ApprovalMode = "Perguntar" | "Automático" | "Somente leitura";
+type ApprovalMode = AccessMode;
+type ConfirmAnswer = "allow" | "always" | "deny";
+
+/** Passo do agente como linha do chat: ícone de estado + rótulo + saída recolhível. */
+function AgentSteps({ steps }: { steps: AgentStep[] }) {
+  return <ol className="agent-steps">{steps.map((step) => {
+    const Icon = step.status === "ok" ? CircleCheck : step.status === "running" ? LoaderCircle : step.status === "waiting" ? CircleAlert : CircleX;
+    return <li key={step.id} className={`agent-step ${step.status}`}>
+      <details>
+        <summary><Icon size={13} className={step.status === "running" ? "spin" : undefined} /><span>{step.label}</span>{step.status === "waiting" && <em>aguardando você</em>}{step.status === "denied" && <em>não permitido</em>}</summary>
+        {step.output && <pre>{step.output}</pre>}
+      </details>
+    </li>;
+  })}</ol>;
+}
+
+function upsertStep(steps: AgentStep[], step: AgentStep): AgentStep[] {
+  const index = steps.findIndex((item) => item.id === step.id);
+  if (index < 0) return [...steps, step];
+  const next = [...steps];
+  next[index] = step;
+  return next;
+}
 
 /** Anexos enviados nesta sessão, por id da mensagem, para as perguntas seguintes ainda verem a imagem. */
 const sessionAttachments = new Map<string, { images: string[]; text: string }>();
@@ -50,6 +73,7 @@ async function readAttachments(files: File[]): Promise<{ images: string[]; text:
   return { images, text: parts.join("\n\n") };
 }
 
+/** Tela de chat: mensagens, compositor (anexos, modelo, esforço, acesso), voz local e modo agente "Controlar o PC". */
 export function ChatView() {
   const { state, dispatch } = useStore();
   const local = useLocalModels();
@@ -69,7 +93,10 @@ export function ChatView() {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [contextProject, setContextProject] = useState("Open Assistant");
-  const [approval, setApproval] = useState<ApprovalMode>("Perguntar");
+  const approval = state.access;
+  const setApproval = (access: ApprovalMode) => dispatch({ type: "setAccess", access });
+  const [confirmRequest, setConfirmRequest] = useState<{ step: AgentStep; resolve: (answer: ConfirmAnswer) => void }>();
+  const agentCancel = useRef(false);
   const [accessLevel, setAccessLevel] = useState(100);
   const [expression, setExpression] = useState<RobotExpression>("idle");
   const [stageVisible, setStageVisible] = useState(false);
@@ -266,6 +293,28 @@ export function ChatView() {
     let thinkingMs: number | undefined;
     try {
       if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
+      if (state.agentMode && !isQAOffline()) {
+        // Modo "Controlar o PC": o agente executa ferramentas e mostra cada passo.
+        agentCancel.current = false;
+        let steps: AgentStep[] = [];
+        const result = await runAgent({
+          model,
+          history: history.slice(0, -1).filter((item) => item.role === "user" || item.role === "assistant").map((item) => ({ role: item.role as "user" | "assistant", content: item.content })),
+          userText: attached.text ? `${sourceText}\n\n${attached.text}` : sourceText,
+          images: attached.images,
+          access: state.access,
+          effort: state.effort,
+          requestId,
+          onStep: (step) => { steps = upsertStep(steps, step); dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { steps } }); },
+          confirm: (step) => new Promise<ConfirmAnswer>((resolve) => setConfirmRequest({ step, resolve })),
+          isCancelled: () => agentCancel.current,
+        });
+        if (result.tokensPerSecond) setLastGeneration({ chatId, model, tokensPerSecond: result.tokensPerSecond });
+        dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: result.text, steps: result.steps, loading: false, source: result.source, tokens: result.tokens, tokensPerSecond: result.tokensPerSecond } });
+        if (options.speakAfter && result.text) startSpeaking(result.text);
+        else setOrbitalState(nextOrbitalState("reset"));
+        return;
+      }
       const reply = await askAI(model, history, {
         requestId,
         effort: state.effort,
@@ -295,7 +344,21 @@ export function ChatView() {
       if (local.ollama !== "checking") void refreshInstalledModels();
     } finally {
       setPendingRequest(undefined);
+      setConfirmRequest(undefined);
     }
+  }
+
+  /** Parar: cancela a geração e, no agente, também o próximo passo e qualquer confirmação aberta. */
+  function stopGeneration() {
+    agentCancel.current = true;
+    confirmRequest?.resolve("deny");
+    setConfirmRequest(undefined);
+    if (pendingRequest) void cancelAI(pendingRequest.requestId);
+  }
+
+  function answerConfirm(answer: ConfirmAnswer) {
+    confirmRequest?.resolve(answer);
+    setConfirmRequest(undefined);
   }
 
   async function finishCapture(result: CaptureResult, asrModel: string) {
@@ -479,6 +542,7 @@ export function ChatView() {
         const streaming = pendingRequest?.assistantId === message.id && !message.loading;
         const interrupted = message.source?.includes("interrompida");
         return <article key={message.id} className={`msg msg-assistant ${message.error ? "error" : ""}`}>
+          {message.steps && message.steps.length > 0 && <AgentSteps steps={message.steps} />}
           {message.loading
             ? <ThinkingIndicator messageId={message.id} startedAt={message.startedAt} tokens={message.thinkingTokens} preview={message.thinking} />
             : message.error
@@ -496,11 +560,24 @@ export function ChatView() {
       <p className="orbital-status" aria-live="polite">{activityLabel(orbitalState)}</p>
     </section>}
     <div className="composer-wrap apple-composer-wrap" ref={composerRef}>
+      {confirmRequest && <div className="agent-confirm" role="alertdialog" aria-label="Confirmar ação do agente">
+        <ShieldCheck size={18} />
+        <div className="agent-confirm-copy">
+          <strong>{confirmRequest.step.label}</strong>
+          <small>{confirmRequest.step.reason}</small>
+          {confirmRequest.step.tool === "run_command" && <code>{String(confirmRequest.step.args.command ?? "")}</code>}
+        </div>
+        <div className="agent-confirm-actions">
+          <button className="primary-button" onClick={() => answerConfirm("allow")}>Permitir</button>
+          <button className="flat-button" onClick={() => answerConfirm("always")} title="Libera mouse, teclado e comandos até o fim desta tarefa (bloqueios de segurança continuam valendo)">Permitir nesta tarefa</button>
+          <button className="flat-button" onClick={() => answerConfirm("deny")}>Negar</button>
+        </div>
+      </div>}
       {voiceError && <div className="inline-error">{voiceError}{(voiceNeedsSetup || orbitalState === "error") && <button onClick={openVoiceSettings}><Mic size={12} />Configurar voz</button>}<button aria-label="Fechar aviso" onClick={() => { setVoiceError(""); setVoiceNeedsSetup(false); }}><X size={12} /></button></div>}
       <div className={`composer apple-composer ${listening ? "listening" : ""}`}>
         {listening && <div className="voice-wave"><i /><i /><i /><i /><i /><i /><i /></div>}
         {attachments.length > 0 && <div className="attachment-chips">{attachments.map((file) => <span key={`${file.name}-${file.size}`}><FileText size={12} />{file.name}<button onClick={() => setAttachments((items) => items.filter((item) => item !== file))}><X size={11} /></button></span>)}</div>}
-        <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder={listening ? "Ouvindo… (clique no quadrado para enviar)" : transcribing ? "Transcrevendo…" : chatModel ? `Pergunte ao ${ollamaModelId(chatModel) ?? modelDisplayName(chatModel)}` : "Pergunte qualquer coisa"} rows={1} />
+        <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder={listening ? "Ouvindo… (clique no quadrado para enviar)" : transcribing ? "Transcrevendo…" : state.agentMode ? "Peça uma ação no PC — ex.: abre o chrome e entra no g1" : chatModel ? `Pergunte ao ${ollamaModelId(chatModel) ?? modelDisplayName(chatModel)}` : "Pergunte qualquer coisa"} rows={1} />
         <div className="composer-toolbar apple-composer-toolbar">
           <div className="composer-left-actions">
             <button className={`composer-plus ${quickMenuOpen ? "active" : ""}`} title="Mais opções" aria-label="Mais opções" aria-expanded={quickMenuOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "quick")); setModelMenuOpen(false); setApprovalOpen(false); }}><Plus size={17} /></button>
@@ -530,6 +607,7 @@ export function ChatView() {
               <button onClick={chooseFiles}><span><FileText size={14} />Anexar documento</span></button>
               <button onClick={chooseFiles}><span><Image size={14} />Anexar foto</span></button>
             </div>}
+            <button className={`agent-toggle ${state.agentMode ? "active" : ""}`} aria-pressed={state.agentMode} title={state.agentMode ? "Controlando o PC: o assistente pode abrir apps, clicar e digitar (com a permissão escolhida em + › Acesso ao computador)" : "Deixar o assistente controlar o PC"} onClick={() => dispatch({ type: "setAgentMode", on: !state.agentMode })}><MousePointer2 size={14} /><span>Controlar o PC</span></button>
             <button className={`project-context ${projectOpen ? "active" : ""}`} title="Projeto de contexto" aria-expanded={projectOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "project")); setModelMenuOpen(false); setApprovalOpen(false); }}><Folder size={14} /><span>{contextProject}</span></button>
             {projectOpen && <div className="composer-popover project-popover">
               <input autoFocus value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Buscar projetos" aria-label="Buscar projetos" />
@@ -543,7 +621,7 @@ export function ChatView() {
           <div className="composer-right-actions">
             <button className={`ai-meter ${aiMeter.kind}`} title={`${aiMeter.label}. ${aiMeter.throughput}`} aria-label={`Uso de IA: ${aiMeter.label}. ${aiMeter.throughput}`} aria-expanded={meterOpen} onClick={() => setActivePopover(nextComposerPopover(activePopover, "meter"))}><i><b>{aiMeter.kind === "local" ? "∞" : aiMeter.kind === "qa" ? "QA" : "—"}</b></i></button>
             {meterOpen && <div className="composer-popover meter-popover"><strong>{aiMeter.label}</strong><small>{aiMeter.detail}</small><span>{aiMeter.throughput}</span></div>}
-            <button className="send-button apple-send" onClick={generating ? () => cancelAI(pendingRequest!.requestId) : listening || orbitalState === "speaking" ? toggleVoice : canSend ? () => send() : toggleVoice} title={generating ? "Parar resposta" : listening ? "Parar ditado" : orbitalState === "speaking" ? "Parar fala" : canSend ? "Enviar" : "Iniciar conversa por voz"}>{generating || listening || orbitalState === "speaking" ? <Square size={14} /> : canSend ? <ArrowUp size={17} /> : <AudioLines size={16} />}</button>
+            <button className="send-button apple-send" onClick={generating ? stopGeneration : listening || orbitalState === "speaking" ? toggleVoice : canSend ? () => send() : toggleVoice} title={generating ? "Parar resposta" : listening ? "Parar ditado" : orbitalState === "speaking" ? "Parar fala" : canSend ? "Enviar" : "Iniciar conversa por voz"}>{generating || listening || orbitalState === "speaking" ? <Square size={14} /> : canSend ? <ArrowUp size={17} /> : <AudioLines size={16} />}</button>
           </div>
         </div>
         <input ref={fileInput} type="file" multiple hidden onChange={(event) => {

@@ -14,6 +14,7 @@ const LANGUAGES = [{ id: "pt", label: "Português" }, { id: "en", label: "Inglê
 
 type TestState = { phase: "idle" } | { phase: "listening" } | { phase: "transcribing" } | { phase: "done"; text: string; ms: number; seconds: number } | { phase: "error"; message: string };
 
+/** Aba "Voz": microfone com teste real, idioma, modelo de reconhecimento e voz do assistente. */
 export function VoiceSettings() {
   const { state, dispatch } = useStore();
   const tools = useTools();

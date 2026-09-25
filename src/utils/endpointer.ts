@@ -15,10 +15,12 @@ export interface EndpointerOptions {
 
 export type EndpointEvent = "none" | "speech-start" | "speech-end" | "no-speech" | "max-length";
 
+/** Tempos padrão do modo voz. */
 export const DEFAULT_ENDPOINTER: EndpointerOptions = { silenceMs: 900, noSpeechMs: 8000, maxMs: 30000, minSpeechMs: 150 };
 
 const MIN_THRESHOLD = 0.012;
 
+/** Máquina de estados de início/fim de fala; alimente com `push(rms, ms)` a cada bloco. */
 export class Endpointer {
   private elapsed = 0;
   private noiseFloor = 0.01;
@@ -60,6 +62,7 @@ export class Endpointer {
   }
 }
 
+/** Energia (raiz da média dos quadrados) de um bloco de áudio. */
 export function rms(samples: Float32Array): number {
   let sum = 0;
   for (let index = 0; index < samples.length; index++) sum += samples[index] * samples[index];

@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 mod agent;
 mod bitnet;
 mod computer;
+mod mcp;
 mod speech;
 mod tools;
 
@@ -143,6 +144,7 @@ fn qa_terminal_output(input: &str) -> String {
     format!("[QA offline] Comando simulado: {}\r\n", input.trim())
 }
 
+/// Abre uma sessão real de PowerShell/CMD e transmite a saída pelo evento `terminal-output`.
 #[tauri::command]
 fn spawn_terminal_session(
     app: AppHandle,
@@ -205,6 +207,7 @@ fn spawn_terminal_session(
     Ok(session_id)
 }
 
+/// Envia uma linha de comando para a sessão de terminal.
 #[tauri::command]
 fn write_terminal_session(
     app: AppHandle,
@@ -238,6 +241,7 @@ fn write_terminal_session(
         .map_err(|error| format!("falha ao escrever no terminal: {error}"))
 }
 
+/// Encerra a sessão de terminal e seu processo.
 #[tauri::command]
 fn terminate_terminal_session(state: State<AppState>, session_id: String) -> Result<(), String> {
     if let Some(mut terminal) = state
@@ -254,6 +258,7 @@ fn terminate_terminal_session(state: State<AppState>, session_id: String) -> Res
     Ok(())
 }
 
+/// Guarda uma chave de API no Gerenciador de Credenciais do Windows.
 #[tauri::command]
 fn save_credential(
     app: AppHandle,
@@ -275,6 +280,7 @@ fn save_credential(
         .map_err(|error| format!("falha ao salvar no Gerenciador de Credenciais: {error}"))
 }
 
+/// Lê uma chave salva (ou None).
 #[tauri::command]
 fn read_credential(
     app: AppHandle,
@@ -297,6 +303,7 @@ fn read_credential(
     }
 }
 
+/// Apaga uma chave salva.
 #[tauri::command]
 fn delete_credential(
     app: AppHandle,
@@ -477,6 +484,7 @@ fn qa_local_operation(app: &AppHandle, kind: &str, model_id: Option<String>) -> 
     id
 }
 
+/// Instala o Ollama pelo winget, transmitindo o progresso.
 #[tauri::command]
 fn install_ollama(app: AppHandle, state: State<AppState>) -> Result<String, String> {
     if is_qa_app(&app) {
@@ -502,6 +510,7 @@ fn install_ollama(app: AppHandle, state: State<AppState>) -> Result<String, Stri
     )
 }
 
+/// Cancela uma operação local (instalação) em andamento.
 #[tauri::command]
 fn cancel_local_model_operation(
     app: AppHandle,
@@ -1214,6 +1223,7 @@ async fn bitnet_chat(
     result?
 }
 
+/// Sinaliza o cancelamento de uma geração (Ollama ou BitNet) pelo id da requisição.
 #[tauri::command]
 fn ollama_cancel_chat(state: State<AppState>, request_id: String) -> Result<(), String> {
     if let Some(cancel) = state
@@ -1312,6 +1322,7 @@ fn qa_hardware_profile() -> HardwareProfile {
     }
 }
 
+/// Inventário de GPU/VRAM (nvidia-smi), CPU, RAM e disco livre.
 #[tauri::command]
 async fn scan_hardware(app: AppHandle) -> Result<HardwareProfile, String> {
     if is_qa_app(&app) {
@@ -1391,6 +1402,7 @@ fn qa_runtime_statuses() -> Vec<RuntimeStatus> {
     ]
 }
 
+/// Ollama/OpenClaw: instalado? rodando? versão?
 #[tauri::command]
 async fn check_local_runtime_status(app: AppHandle) -> Result<Vec<RuntimeStatus>, String> {
     if is_qa_app(&app) {
@@ -1406,6 +1418,7 @@ async fn check_local_runtime_status(app: AppHandle) -> Result<Vec<RuntimeStatus>
     .map_err(|error| error.to_string())
 }
 
+/// Inicia o runtime local (`ollama serve` ou OpenClaw) sem janela.
 #[tauri::command]
 fn start_runtime(app: AppHandle, component: String) -> Result<String, String> {
     if is_qa_app(&app) {
@@ -1436,6 +1449,7 @@ fn start_runtime(app: AppHandle, component: String) -> Result<String, String> {
     Ok(format!("{component} iniciado com sucesso"))
 }
 
+/// Mostra e foca a janela principal quando a interface terminou de carregar.
 #[tauri::command]
 fn app_ready(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
@@ -1453,6 +1467,7 @@ pub fn run() {
         .manage(speech::SpeechState::default())
         .manage(bitnet::BitnetState::default())
         .manage(computer::ComputerState::default())
+        .manage(mcp::McpState::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             spawn_terminal_session,
@@ -1482,6 +1497,10 @@ pub fn run() {
             agent::agent_route,
             agent::agent_tool,
             agent::agent_finish,
+            mcp::mcp_overview,
+            mcp::mcp_save_config,
+            mcp::mcp_start,
+            mcp::mcp_stop,
             app_ready
         ])
         .build(tauri::generate_context!())
@@ -1490,6 +1509,7 @@ pub fn run() {
             // O servidor do BitNet é um processo à parte; não pode ficar rodando sem o app.
             if let tauri::RunEvent::Exit = event {
                 bitnet::stop_server(app);
+                mcp::stop_all(app);
             }
         });
 }

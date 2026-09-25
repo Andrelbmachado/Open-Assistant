@@ -6,6 +6,7 @@ import { useStore } from "../store/store";
 
 interface OutputEvent { sessionId: string; data: string; stream: string }
 
+/** Terminal integrado (PowerShell/CMD reais via comandos spawn/write/terminate do Rust). */
 export function TerminalView() {
   const { state } = useStore();
   const currentAgent = state.agents.find((agent) => agent.id === state.currentAgentId);

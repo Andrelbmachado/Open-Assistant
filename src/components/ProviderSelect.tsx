@@ -22,6 +22,7 @@ function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toLocaleUpperCase()).join("");
 }
 
+/** Logo do provedor de IA (arquivo em assets/providers ou iniciais). */
 export function ProviderLogo({ provider }: { provider: ProviderConfig }) {
   const brand = BRANDS[provider.id];
   if (brand?.kind === "wordmark") return <span className={`provider-logo wordmark brand-${provider.id}`}><img src={brand.src} alt={provider.name} draggable={false} /></span>;

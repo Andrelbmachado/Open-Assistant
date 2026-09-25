@@ -24,6 +24,7 @@ export interface SplitIntent {
 
 const VIEW_KINDS = new Set<ViewKind>(["chat", "workflow", "terminal", "agents", "marketplace", "files", "browser", "dashboard"]);
 
+/** Converte o arrasto a partir de um canto em intenção de dividir a área (eixo e fração). */
 export function calculateSplitIntent(corner: Corner, deltaX: number, deltaY: number, width: number, height: number): SplitIntent | null {
   const leading = corner.endsWith("left");
   const top = corner.startsWith("top");
@@ -45,10 +46,12 @@ export function calculateSplitIntent(corner: Corner, deltaX: number, deltaY: num
   return { axis: "vertical", fraction: top ? share : 1 - share, newAreaFirst: top };
 }
 
+/** Valida um layout restaurado do localStorage. */
 export function isValidWorkspaceLayout(node: unknown): node is WorkspaceLayoutNode {
   return validateWorkspaceLayout(node, new Set<string>());
 }
 
+/** O layout contém a área `id`? */
 export function hasWorkspaceArea(node: WorkspaceLayoutNode, id: string): boolean {
   if ("view" in node) return node.id === id;
   return hasWorkspaceArea(node.first, id) || hasWorkspaceArea(node.second, id);

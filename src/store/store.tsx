@@ -2,11 +2,12 @@ import { createContext, useContext, useEffect, useMemo, useReducer, type ReactNo
 import { hasWorkspaceArea, isValidWorkspaceLayout, type ViewKind, type WorkspaceArea, type WorkspaceLayoutNode, type WorkspaceSplit } from "../utils/workspaceLayout";
 import { DEFAULT_ORBITAL_SKIN, isOrbitalSkin, type OrbitalSkin } from "../utils/orbitalState";
 import { DEFAULT_EFFORT, isEffortLevel, type EffortLevel } from "../utils/effort";
+import type { AccessMode, AgentStep } from "../utils/agentRunner";
 
 export type { ViewKind, WorkspaceArea, WorkspaceLayoutNode, WorkspaceSplit } from "../utils/workspaceLayout";
 
 export type Theme = "dark" | "light" | "system";
-export type SettingsTab = "general" | "providers" | "models" | "tools" | "voice" | "runtimes" | "permissions";
+export type SettingsTab = "general" | "providers" | "models" | "tools" | "voice" | "mcp" | "runtimes" | "permissions";
 
 /** Preferências do modo voz. Ids de modelo vêm de `utils/toolCatalog.ts`. */
 export interface VoiceSettings {
@@ -40,6 +41,8 @@ export interface ChatMessage {
   /** Tempo até o primeiro trecho da resposta final. */
   thinkingMs?: number;
   thinkingTokens?: number;
+  /** Passos do agente (modo "Controlar o PC"), exibidos acima da resposta. */
+  steps?: AgentStep[];
 }
 
 export interface WorkflowNode {
@@ -113,6 +116,10 @@ export interface AppState {
   faceVersion: number;
   effort: EffortLevel;
   voice: VoiceSettings;
+  /** Modo "Controlar o PC": as mensagens vão para o agente com ferramentas. */
+  agentMode: boolean;
+  /** Permissão do agente: Perguntar / Automático / Somente leitura. */
+  access: AccessMode;
   activeChatId: string;
   chats: Chat[];
   projects: Project[];
@@ -136,6 +143,8 @@ type Action =
   | { type: "setOrbitalSkin"; skin: OrbitalSkin }
   | { type: "setEffort"; effort: EffortLevel }
   | { type: "setVoice"; patch: Partial<VoiceSettings> }
+  | { type: "setAgentMode"; on: boolean }
+  | { type: "setAccess"; access: AccessMode }
   | { type: "sendMessage"; text: string }
   | { type: "moveNode"; id: string; x: number; y: number }
   | { type: "connectNodes"; from: string; to: string; fromPort?: number; toPort?: number }
@@ -205,6 +214,8 @@ const initialState: AppState = {
   faceVersion: 2,
   effort: DEFAULT_EFFORT,
   voice: { language: "pt", speed: 1 },
+  agentMode: false,
+  access: "Perguntar",
   activeChatId: "welcome",
   chats: [
     {
@@ -261,6 +272,8 @@ function reducer(state: AppState, action: Action): AppState {
     case "setOrbitalSkin": return { ...state, orbitalSkin: action.skin };
     case "setEffort": return { ...state, effort: action.effort };
     case "setVoice": return { ...state, voice: { ...state.voice, ...action.patch } };
+    case "setAgentMode": return { ...state, agentMode: action.on };
+    case "setAccess": return { ...state, access: action.access };
     case "moveNode": return { ...state, nodes: state.nodes.map((node) => node.id === action.id ? { ...node, x: action.x, y: action.y } : node) };
     case "connectNodes": {
       if (action.from === action.to || state.connections.some((connection) => connection.from === action.from && connection.to === action.to && (connection.fromPort ?? 0) === (action.fromPort ?? 0) && (connection.toPort ?? 0) === (action.toPort ?? 0))) return state;
@@ -366,6 +379,7 @@ function settleInterruptedMessages(chats: Chat[]): Chat[] {
 
 const StoreContext = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(null);
 
+/** Provedor do estado global; restaura do localStorage e aplica tema/cor a cada mudança. */
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState, (fallback) => {
     try {
@@ -375,7 +389,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const layoutIsCurrent = restored.layoutVersion === fallback.layoutVersion
         && isValidWorkspaceLayout(restored.workspaceLayout)
         && hasWorkspaceArea(restored.workspaceLayout, restored.activeAreaId);
-      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, orbitalSkin: restored.faceVersion === fallback.faceVersion && isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, faceVersion: fallback.faceVersion, effort: isEffortLevel(restored.effort) ? restored.effort : fallback.effort, voice: { ...fallback.voice, ...(restored.voice ?? {}) }, chats: layoutIsCurrent ? settleInterruptedMessages(restored.chats ?? fallback.chats) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, settingsTab: undefined, settingsFocusModel: undefined, paletteOpen: false };
+      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, orbitalSkin: restored.faceVersion === fallback.faceVersion && isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, faceVersion: fallback.faceVersion, effort: isEffortLevel(restored.effort) ? restored.effort : fallback.effort, voice: { ...fallback.voice, ...(restored.voice ?? {}) }, agentMode: restored.agentMode === true, access: ["Perguntar", "Automático", "Somente leitura"].includes(restored.access) ? restored.access : fallback.access, chats: layoutIsCurrent ? settleInterruptedMessages(restored.chats ?? fallback.chats) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, settingsTab: undefined, settingsFocusModel: undefined, paletteOpen: false };
     } catch { return fallback; }
   });
 
@@ -390,6 +404,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 
+/** Hook de acesso ao estado global e ao `dispatch`. */
 export function useStore() {
   const value = useContext(StoreContext);
   if (!value) throw new Error("useStore precisa de StoreProvider");

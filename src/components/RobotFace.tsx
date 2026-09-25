@@ -245,6 +245,7 @@ function step(anim: Animator, set: UniformSetter, t: number, dt: number, props: 
   if (props.reducedMotion) set("u_time", time);
 }
 
+/** Rosto de robô do modo voz: olhos e boca animados pela expressão e pelo áudio. */
 export function RobotFace(props: RobotFaceProps) {
   const latest = useRef(props);
   const anim = useRef<Animator | null>(null);

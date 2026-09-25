@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl as openExternalUrl } from "@tauri-apps/plugin-opener";
-import { Atom, Bot, Boxes, Check, ChevronRight, CircleDot, Download, Eye, EyeOff, KeyRound, Mic, Orbit, Palette, Play, RefreshCw, Settings2, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
+import { Atom, Bot, Boxes, Cable, Check, ChevronRight, CircleDot, Download, Eye, EyeOff, KeyRound, Mic, Orbit, Palette, Play, RefreshCw, Settings2, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useStore, type SettingsTab, type Theme } from "../store/store";
 import { refreshInstalledModels } from "../store/localModelsStore";
@@ -10,6 +10,7 @@ import { ORBITAL_SKIN_LABELS, ORBITAL_SKINS } from "../utils/orbitalState";
 import { FacePreview } from "./FacePreview";
 import { LocalModelsPanel } from "./LocalModelsPanel";
 import { ProviderLogo, ProviderSelect } from "./ProviderSelect";
+import { McpPanel } from "./McpPanel";
 import { ToolsPanel } from "./ToolsPanel";
 import { VoiceSettings } from "./VoiceSettings";
 
@@ -22,6 +23,7 @@ const runtimeInfo = {
   openclaw: { title: "OpenClaw", description: "Runtime local para agentes", url: "https://docs.openclaw.ai/windows" },
 };
 
+/** Modal de Configurações; cada aba é um painel (Aparência, Provedores, Modelos, Ferramentas, Voz, MCP, Runtimes, Permissões). */
 export function SettingsView() {
   const { state, dispatch } = useStore();
   const [tab, setTab] = useState<SettingsTab>("general");
@@ -112,6 +114,7 @@ export function SettingsView() {
           <button className={tab === "models" ? "active" : ""} onClick={() => setTab("models")}><Bot size={16} />Modelos locais<ChevronRight size={13} /></button>
           <button className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")}><Boxes size={16} />Ferramentas de IA<ChevronRight size={13} /></button>
           <button className={tab === "voice" ? "active" : ""} onClick={() => setTab("voice")}><Mic size={16} />Voz<ChevronRight size={13} /></button>
+          <button className={tab === "mcp" ? "active" : ""} onClick={() => setTab("mcp")}><Cable size={16} />Conectores MCP<ChevronRight size={13} /></button>
           <button className={tab === "runtimes" ? "active" : ""} onClick={() => setTab("runtimes")}><Bot size={16} />Runtimes locais<ChevronRight size={13} /></button>
           <button className={tab === "permissions" ? "active" : ""} onClick={() => setTab("permissions")}><ShieldCheck size={16} />Permissões<ChevronRight size={13} /></button>
         </nav>
@@ -121,6 +124,7 @@ export function SettingsView() {
           {tab === "models" && <LocalModelsPanel />}
           {tab === "tools" && <ToolsPanel />}
           {tab === "voice" && <VoiceSettings />}
+          {tab === "mcp" && <McpPanel />}
           {tab === "runtimes" && <><div className="settings-heading runtime-heading"><div><span>Execução local</span><h3>Ollama e OpenClaw</h3><p>O Open Assistant nunca instala runtimes automaticamente.</p></div><button className="flat-button" onClick={refreshRuntimes} disabled={checking}><RefreshCw size={14} className={checking ? "spin" : ""} />Verificar</button></div><div className="runtime-notice"><ShieldCheck size={18} /><div><strong>Você mantém o controle</strong><p>Os botões abaixo apenas abrem a página oficial. O download e a instalação só acontecem quando você decidir.</p></div></div><div className="runtime-list">{(["ollama", "openclaw"] as const).map((id) => { const status = runtimes.find((item) => item.component === id); const info = runtimeInfo[id]; return <article key={id}><span className="runtime-logo">{id === "ollama" ? "OL" : "OC"}</span><div className="runtime-copy"><div><h4>{info.title}</h4><span className={`status-badge ${status?.running ? "running" : status?.installed ? "installed" : "missing"}`}>{status?.running ? "Rodando" : status?.installed ? "Instalado" : "Não instalado"}</span></div><p>{info.description}</p><small>{status?.version ?? (status?.installed ? status.binaryPath : `Porta padrão: ${status?.port ?? "—"}`)}</small></div><div style={{ display: "flex", gap: "8px" }}>{status?.installed && !status?.running && <button className="flat-button" onClick={() => handleStartRuntime(id)} title="Iniciar serviço local"><Play size={14} />Iniciar</button>}<button className="flat-button" onClick={() => openUrl(info.url)}><Download size={14} />{status?.installed ? "Site oficial" : "Baixar manualmente"}</button></div></article>; })}</div>{message && <p className="settings-message">{message}</p>}</>}
           {tab === "permissions" && <><div className="settings-heading"><span>Segurança</span><h3>Permissões dos agentes</h3><p>Defina limites antes de conectar modelos e ferramentas.</p></div><div className="permission-list">{["Ler arquivos do projeto", "Criar e editar arquivos", "Executar comandos no terminal", "Acessar a rede externa", "Alterar workflows"].map((name, index) => <label key={name}><span><strong>{name}</strong><small>{index < 2 ? "Permitido no workspace atual" : "Exigir confirmação"}</small></span><input type="checkbox" defaultChecked={index < 2} /></label>)}</div></>}
         </div>

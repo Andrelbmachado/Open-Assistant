@@ -17,6 +17,7 @@ function speedDescription(tokensPerSecond: number) {
   return "econômico";
 }
 
+/** Resumo do medidor de uso (local = ilimitado; nuvem = saldo) e velocidade da última resposta. */
 export function getAIMeterSummary(model: string, tokensPerSecond: number | undefined, qaOffline: boolean): AIMeterSummary {
   const throughput = tokensPerSecond ? `${Math.round(tokensPerSecond)} tok/s · ${speedDescription(tokensPerSecond)}` : "Aguardando resposta";
 

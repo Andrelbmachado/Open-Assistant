@@ -628,6 +628,7 @@ fn install(app: &AppHandle, recipe: &'static Recipe, cancel: &AtomicBool) -> Res
     run_recipe(app, recipe.id, recipe, cancel)
 }
 
+/// Estado de cada receita: instalada? instalando agora?
 #[tauri::command]
 pub fn tools_status(app: AppHandle, state: State<ToolsState>) -> Result<Vec<ToolStatus>, String> {
     let jobs = state.jobs.lock().map_err(|_| "estado das ferramentas indisponível")?;
@@ -641,6 +642,7 @@ pub fn tools_status(app: AppHandle, state: State<ToolsState>) -> Result<Vec<Tool
         .collect())
 }
 
+/// Instala a receita (e dependências) em segundo plano; progresso pelo evento `tool-progress`.
 #[tauri::command]
 pub fn tool_install(app: AppHandle, state: State<ToolsState>, tool_id: String) -> Result<(), String> {
     let recipe = recipe(&tool_id).ok_or_else(|| format!("Ferramenta desconhecida: {tool_id}"))?;
@@ -668,6 +670,7 @@ pub fn tool_install(app: AppHandle, state: State<ToolsState>, tool_id: String) -
     Ok(())
 }
 
+/// Pede o cancelamento de uma instalação (downloads param no próximo bloco; processos são mortos).
 #[tauri::command]
 pub fn tool_cancel(state: State<ToolsState>, tool_id: String) -> Result<(), String> {
     if let Some(cancel) = state
@@ -681,6 +684,7 @@ pub fn tool_cancel(state: State<ToolsState>, tool_id: String) -> Result<(), Stri
     Ok(())
 }
 
+/// Apaga a ferramenta do disco (para servidores/modelos que a usam antes).
 #[tauri::command]
 pub fn tool_remove(app: AppHandle, state: State<ToolsState>, tool_id: String) -> Result<(), String> {
     let recipe = recipe(&tool_id).ok_or_else(|| format!("Ferramenta desconhecida: {tool_id}"))?;

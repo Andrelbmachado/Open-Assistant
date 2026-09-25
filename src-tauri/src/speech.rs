@@ -269,6 +269,7 @@ pub async fn asr_transcribe(app: AppHandle, request: tauri::ipc::Request<'_>) ->
     .map_err(|error| error.to_string())?
 }
 
+/// Sintetiza fala com uma voz Piper; devolve WAV binário (sem JSON).
 #[tauri::command]
 pub async fn tts_synthesize(app: AppHandle, voice_id: String, text: String, speed: Option<f32>) -> Result<tauri::ipc::Response, String> {
     let bytes = tauri::async_runtime::spawn_blocking(move || synthesize(&app, &voice_id, &text, speed.unwrap_or(1.0)))

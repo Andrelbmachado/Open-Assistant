@@ -63,14 +63,17 @@ function subscribe(listener: () => void) {
   return () => { listeners.delete(listener); };
 }
 
+/** Hook: ferramentas instaladas e progresso das instalações. */
 export function useTools(): ToolsSnapshot {
   return useSyncExternalStore(subscribe, () => snapshot);
 }
 
+/** Leitura síncrona do estado das ferramentas. */
 export function getToolsSnapshot(): ToolsSnapshot {
   return snapshot;
 }
 
+/** Consulta o backend (`tools_status`) e limpa progressos órfãos. */
 export async function refreshTools(): Promise<void> {
   if (isQAOffline()) { update({ loaded: true }); return; }
   await ensureBridge();
@@ -87,6 +90,7 @@ export async function refreshTools(): Promise<void> {
   }
 }
 
+/** Pede ao backend a instalação da receita `toolId`. */
 export async function installTool(toolId: string): Promise<void> {
   setProgress({ toolId, state: "running", phase: "Preparando" });
   await ensureBridge();
@@ -97,10 +101,12 @@ export async function installTool(toolId: string): Promise<void> {
   }
 }
 
+/** Cancela a instalação em andamento. */
 export function cancelTool(toolId: string): Promise<void> {
   return invoke<void>("tool_cancel", { toolId }).catch(() => undefined);
 }
 
+/** Apaga a pasta da ferramenta (o backend libera modelos carregados antes). */
 export async function removeTool(toolId: string): Promise<void> {
   await invoke("tool_remove", { toolId });
   update((current) => {
@@ -112,6 +118,7 @@ export async function removeTool(toolId: string): Promise<void> {
   });
 }
 
+/** Esconde o progresso/erro de uma instalação. */
 export function dismissToolProgress(toolId: string) {
   update((current) => {
     const progress = { ...current.progress };

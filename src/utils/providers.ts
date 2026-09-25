@@ -7,10 +7,12 @@ export interface ProviderConfig {
   enabled?: boolean;
 }
 
+/** Id estável de um provedor a partir do nome (minúsculas, hífens). */
 export function createProviderId(name: string): string {
   return name.trim().toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
 
+/** Erro de validação de um provedor customizado, ou undefined se ok. */
 export function validateProviderConfig(config: ProviderConfig): string | undefined {
   if (!config.name.trim()) return "Informe o nome do provedor.";
   if (!config.defaultModel.trim()) return "Informe o modelo padrão.";

@@ -127,6 +127,7 @@ function drawCanvas(context: CanvasRenderingContext2D, width: number, height: nu
   context.globalCompositeOperation = "source-over";
 }
 
+/** Rosto de partículas (skins tentáculos/esfera/átomo) que reage ao estado e ao volume da fala. */
 export function OrbitalCanvas({ skin, state, audioLevel, reducedMotion = false }: OrbitalCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const latest = useRef({ skin, state, audioLevel, reducedMotion });

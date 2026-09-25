@@ -2,6 +2,7 @@ import { Bot, MessageSquare, Search, Settings, TerminalSquare, Workflow, X } fro
 import { useEffect, useMemo, useState } from "react";
 import { useStore, type ViewKind } from "../store/store";
 
+/** Paleta de comandos (Ctrl+P): atalhos para vistas e Configurações. */
 export function CommandPalette() {
   const { state, dispatch } = useStore();
   const [query, setQuery] = useState("");

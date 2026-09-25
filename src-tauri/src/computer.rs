@@ -94,16 +94,48 @@ pub struct LookResult {
     pub image_height: Option<u32>,
 }
 
-/// Janela visível mais ao topo que não pertence a este processo.
+/// Mesma regra do Alt+Tab: visível, não "cloaked" (outra área de trabalho/UWP suspenso),
+/// sem estilo de janela-ferramenta e aceitando foco. Tira overlays (NVIDIA, Discord, Xbox Game Bar).
+fn is_user_window(hwnd: isize) -> bool {
+    use windows::Win32::{
+        Foundation::HWND,
+        Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED},
+        UI::WindowsAndMessaging::{GetWindowLongW, IsWindowVisible, GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT},
+    };
+    let hwnd = HWND(hwnd as *mut core::ffi::c_void);
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() {
+            return false;
+        }
+        let style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        if style & (WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0) != 0 {
+            return false;
+        }
+        let mut cloaked: u32 = 0;
+        let ok = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut core::ffi::c_void, std::mem::size_of::<u32>() as u32);
+        ok.is_err() || cloaked == 0
+    }
+}
+
+/// Janela do usuário em que o agente deve agir: a que está em primeiro plano, a não ser que
+/// seja o próprio Open Assistant (aí, a próxima na ordem Z).
 fn target_window() -> Option<(xcap::Window, TargetWindow)> {
     let own_pid = std::process::id();
     let mut windows: Vec<xcap::Window> = xcap::Window::all().ok()?;
-    windows.sort_by_key(|window| window.z().unwrap_or(i32::MAX));
+    let foreground = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }.0 as isize;
+    // No xcap, `z` maior = mais ao topo (é `total - índice` do EnumWindows).
+    windows.sort_by_key(|window| {
+        let is_foreground = window.id().map(|id| id as isize == foreground).unwrap_or(false);
+        (std::cmp::Reverse(is_foreground), std::cmp::Reverse(window.z().unwrap_or(i32::MIN)))
+    });
     windows.into_iter().find_map(|window| {
         let pid = window.pid().ok()?;
         let (width, height) = (window.width().ok()?, window.height().ok()?);
         let title = window.title().unwrap_or_default();
         if pid == own_pid || window.is_minimized().unwrap_or(true) || width < 80 || height < 60 || title.trim().is_empty() {
+            return None;
+        }
+        if !is_user_window(window.id().ok()? as isize) {
             return None;
         }
         let info = TargetWindow {
@@ -516,8 +548,42 @@ pub fn scroll(app: &AppHandle, target: &PointTarget, amount: i32) -> Result<Stri
     Ok(format!("Rolei {} {} passos.", if amount > 0 { "para baixo" } else { "para cima" }, amount.abs()))
 }
 
+/// Título da janela em primeiro plano agora (para o modelo saber onde as teclas caíram).
+pub fn foreground_title() -> String {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+    let mut buffer = [0u16; 256];
+    let length = unsafe { GetWindowTextW(GetForegroundWindow(), &mut buffer) };
+    String::from_utf16_lossy(&buffer[..length.max(0) as usize])
+}
+
+/// Teclado vai para a janela em foco. Se o foco está no próprio chat (o usuário acabou de
+/// mandar a mensagem), traz antes a janela alvo para frente — senão as teclas cairiam no chat.
+fn ensure_target_focus() {
+    use windows::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow},
+    };
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid)) };
+    if pid != std::process::id() {
+        return;
+    }
+    if let Some((window, _)) = target_window() {
+        if let Ok(id) = window.id() {
+            if let Ok(mut input) = enigo() {
+                let _ = input.key(Key::Alt, Direction::Click);
+            }
+            unsafe {
+                let _ = SetForegroundWindow(HWND(id as isize as *mut core::ffi::c_void));
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
+}
+
 pub fn type_text(app: &AppHandle, text: &str, submit: bool) -> Result<String, String> {
     check_failsafe()?;
+    ensure_target_focus();
     if let Some((x, y)) = app.state::<ComputerState>().cursor.lock().ok().and_then(|cursor| *cursor) {
         move_agent_cursor(app, x, y, "type", "digitando");
     }
@@ -527,7 +593,15 @@ pub fn type_text(app: &AppHandle, text: &str, submit: bool) -> Result<String, St
         std::thread::sleep(Duration::from_millis(60));
         input.key(Key::Return, Direction::Click).map_err(|error| error.to_string())?;
     }
-    Ok(format!("Digitei {} caracteres{}.", text.chars().count(), if submit { " e apertei Enter" } else { "" }))
+    if submit {
+        std::thread::sleep(Duration::from_millis(900));
+    }
+    Ok(format!(
+        "Digitei {} caracteres{} em \"{}\".",
+        text.chars().count(),
+        if submit { " e apertei Enter" } else { "" },
+        foreground_title()
+    ))
 }
 
 /// Converte "ctrl+shift+t" em teclas do enigo.
@@ -571,6 +645,7 @@ pub fn parse_key(name: &str) -> Result<Key, String> {
 
 pub fn press_keys(combo: &str) -> Result<String, String> {
     check_failsafe()?;
+    ensure_target_focus();
     let keys = combo.split('+').map(parse_key).collect::<Result<Vec<_>, _>>()?;
     let (last, modifiers) = keys.split_last().ok_or("Atalho vazio")?;
     let mut input = enigo()?;
@@ -582,7 +657,8 @@ pub fn press_keys(combo: &str) -> Result<String, String> {
         let _ = input.key(*key, Direction::Release);
     }
     result?;
-    Ok(format!("Apertei {combo}."))
+    std::thread::sleep(Duration::from_millis(250));
+    Ok(format!("Apertei {combo} em \"{}\".", foreground_title()))
 }
 
 #[derive(Serialize)]
@@ -598,13 +674,13 @@ pub struct WindowInfo {
 pub fn list_windows() -> Result<Vec<WindowInfo>, String> {
     let own_pid = std::process::id();
     let mut windows = xcap::Window::all().map_err(|error| error.to_string())?;
-    windows.sort_by_key(|window| window.z().unwrap_or(i32::MAX));
+    windows.sort_by_key(|window| std::cmp::Reverse(window.z().unwrap_or(i32::MIN)));
     Ok(windows
         .into_iter()
         .filter_map(|window| {
             let title = window.title().unwrap_or_default();
             let pid = window.pid().ok()?;
-            if title.trim().is_empty() || pid == own_pid || window.width().unwrap_or(0) < 80 {
+            if title.trim().is_empty() || pid == own_pid || window.width().unwrap_or(0) < 80 || !is_user_window(window.id().ok()? as isize) {
                 return None;
             }
             Some(WindowInfo {

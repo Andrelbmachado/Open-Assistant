@@ -24,6 +24,7 @@ export function formatElapsed(ms: number): string {
   return `${minutes}m ${String(total % 60).padStart(2, "0")}s`;
 }
 
+/** Contagem de tokens compacta ("950", "1,2k"). */
 export function formatTokenCount(tokens: number): string {
   if (tokens < 1000) return `${tokens}`;
   return `${(tokens / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}k`;

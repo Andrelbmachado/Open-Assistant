@@ -64,6 +64,7 @@ function connectionPath(x1: number, y1: number, x2: number, y2: number) {
 
 function portY(node: WorkflowNode, port = 0) { return node.y + PORT_TOP + port * PORT_GAP; }
 
+/** Canvas de nodes de agentes (arrastar, conectar portas, frames, zoom). */
 export function WorkflowCanvas() {
   const { state, dispatch } = useStore();
   const [scale, setScale] = useState(.82);

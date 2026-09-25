@@ -4,6 +4,7 @@ import type { OrbitalState } from "./orbitalState";
 export const ROBOT_EXPRESSIONS = ["idle", "talking", "stopping", "whisper", "shouting", "calm", "fast", "angry"] as const;
 export type RobotExpression = (typeof ROBOT_EXPRESSIONS)[number];
 
+/** Nome de cada expressão do rosto de robô. */
 export const ROBOT_EXPRESSION_LABELS: Record<RobotExpression, string> = {
   idle: "Parado",
   talking: "Conversando",

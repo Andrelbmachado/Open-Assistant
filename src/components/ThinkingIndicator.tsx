@@ -17,6 +17,7 @@ interface ThinkingIndicatorProps {
   preview?: string;
 }
 
+/** Linha "pensando" com Pac-Man, verbo, cronômetro e prévia do raciocínio do modelo. */
 export function ThinkingIndicator({ messageId, startedAt, tokens, preview }: ThinkingIndicatorProps) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

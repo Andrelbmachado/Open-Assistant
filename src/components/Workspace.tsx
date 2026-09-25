@@ -186,6 +186,7 @@ function SplitNode({ split }: { split: WorkspaceSplit }) {
 
 function WorkspaceNode({ node }: { node: WorkspaceLayoutNode }) { return "view" in node ? <AreaShell area={node} /> : <SplitNode split={node} />; }
 
+/** Área principal com painéis divisíveis estilo Blender (cada área mostra uma vista). */
 export function Workspace() {
   const { state } = useStore();
   return <main className="workspace blender-workspace">

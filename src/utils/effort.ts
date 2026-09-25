@@ -2,6 +2,7 @@
 export const EFFORT_LEVELS = ["fast", "medium", "high", "max", "ultra"] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
+/** Esforço padrão: rápido (sem raciocínio). */
 export const DEFAULT_EFFORT: EffortLevel = "fast";
 
 export interface EffortInfo {
@@ -15,6 +16,7 @@ export interface EffortInfo {
   instruction?: string;
 }
 
+/** Rótulo, descrição e parâmetros de raciocínio de cada nível do slider de esforço. */
 export const EFFORT_INFO: Record<EffortLevel, EffortInfo> = {
   fast: { label: "Rápido", description: "Responde direto, sem raciocínio.", think: false },
   medium: { label: "Médio", description: "Raciocínio breve antes de responder.", think: true, thinkLevel: "low" },
@@ -23,14 +25,17 @@ export const EFFORT_INFO: Record<EffortLevel, EffortInfo> = {
   ultra: { label: "Ultra", description: "Explora alternativas e verifica cada etapa.", think: true, thinkLevel: "high", instruction: "Use o máximo de raciocínio: explore abordagens alternativas, verifique cada etapa, procure erros no próprio raciocínio e só então entregue a melhor resposta." },
 };
 
+/** Valida um valor restaurado do localStorage. */
 export function isEffortLevel(value: unknown): value is EffortLevel {
   return typeof value === "string" && (EFFORT_LEVELS as readonly string[]).includes(value);
 }
 
+/** Posição do nível no slider. */
 export function effortIndex(level: EffortLevel): number {
   return EFFORT_LEVELS.indexOf(level);
 }
 
+/** Nível para uma posição do slider (limitada ao intervalo). */
 export function effortAt(index: number): EffortLevel {
   const clamped = Math.min(EFFORT_LEVELS.length - 1, Math.max(0, Math.round(index)));
   return EFFORT_LEVELS[clamped];

@@ -18,6 +18,7 @@ export interface LocalOperationDescription {
   eta?: string;
 }
 
+/** Texto de uma operação local (instalação do Ollama) para a interface. */
 export function describeLocalOperation(operation: LocalModelOperation): LocalOperationDescription {
   const paused = operation.state === "paused";
   return {
@@ -65,6 +66,7 @@ function pullPhase(progress: PullProgress): string {
   return progress.status;
 }
 
+/** Fase, %, bytes, velocidade e tempo restante de um download de modelo. */
 export function describePull(progress: PullProgress): PullDescription {
   const { totalBytes, completedBytes } = progress;
   const known = Boolean(totalBytes && totalBytes > 0 && completedBytes !== undefined);

@@ -15,6 +15,7 @@ function formatSpeed(bytesPerSecond?: number) {
   return bytesPerSecond ? `${formatBytes(bytesPerSecond)}/s` : "";
 }
 
+/** Barra de progresso de uma instalação (fase, %, MB/s ou última linha do log). */
 export function ToolProgressBar({ progress }: { progress: ToolProgress }) {
   const percent = progress.totalBytes ? Math.min(100, Math.round(((progress.completedBytes ?? 0) / progress.totalBytes) * 100)) : undefined;
   const transferred = progress.totalBytes ? `${formatBytes(progress.completedBytes ?? 0)} de ${formatBytes(progress.totalBytes)}` : "";
@@ -48,6 +49,7 @@ export function RecipeActions({ tool, installed, progress, children }: { tool: T
 
 const FILTERS: (ToolCategory | "all")[] = ["all", "asr", "tts", "llm", "vision", "agents"];
 
+/** Aba "Ferramentas de IA": catálogo por empresa, filtros por tipo e ações de baixar/usar/remover. */
 export function ToolsPanel() {
   const { state, dispatch } = useStore();
   const tools = useTools();

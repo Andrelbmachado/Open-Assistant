@@ -8,6 +8,7 @@
 //!    (`allow` / `confirm` / `deny`) aqui no Rust — a interface não decide sozinha.
 
 use super::computer::{self, PointTarget};
+use super::mcp;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -25,7 +26,7 @@ use tauri::{AppHandle, Manager};
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub const SKILL_NAME: &str = "controle-do-windows";
 /// Suba ao mudar os arquivos empacotados: a cópia em AppData é regravada (exceto `memoria/`).
-const SKILL_VERSION: &str = "2026-09-25.1";
+const SKILL_VERSION: &str = "2026-09-25.2";
 
 /// Arquivos da skill embutidos no executável (fonte: `src-tauri/skills/controle-do-windows`).
 const SKILL_FILES: &[(&str, &str)] = &[
@@ -285,6 +286,40 @@ fn extract_slots(intent: &Intent, original: &str, text: &str) -> HashMap<String,
     slots
 }
 
+/// Pedido composto ("abre a calculadora e calcula 12 x 8") não é um intent só: o modelo planeja.
+fn is_composite(text: &str, alias: &str, intent: &Intent, slots: &HashMap<String, String>) -> bool {
+    let rest = text.replacen(alias, "", 1);
+    let has_connector = [" e ", " depois ", " entao ", " e ai ", " clicando ", " para ", " pra "]
+        .iter()
+        .any(|connector| format!(" {} ", rest.trim()).contains(connector));
+    match intent.needs_slot.as_deref() {
+        // O valor extraído deve ser curto ("notepad", "chrome"); frase inteira = pedido composto.
+        Some("app") | Some("process") | Some("package") => {
+            let value = slots.values().next().map(String::as_str).unwrap_or_default();
+            value.split_whitespace().count() > 3 || has_connector
+        }
+        Some(_) => has_connector && rest.split_whitespace().count() > 6,
+        None => rest.split_whitespace().count() > 4 && slots.len() <= 1 || has_connector && rest.split_whitespace().count() > 2,
+    }
+}
+
+/// Resolve nomes falados de apps pelo `memoria/apps.yaml` ("calculadora" → `calc`).
+fn resolve_app_alias(dir: &Path, spoken: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct AppEntry {
+        #[serde(default)]
+        aliases: Vec<String>,
+        exe: String,
+    }
+    let text = fs::read_to_string(dir.join("memoria").join("apps.yaml")).ok()?;
+    let apps: HashMap<String, AppEntry> = serde_yaml::from_str(&text).ok()?;
+    let wanted = normalize(spoken);
+    apps.into_iter().find_map(|(name, entry)| {
+        let names = std::iter::once(name).chain(entry.aliases);
+        names.map(|alias| normalize(&alias)).any(|alias| alias == wanted).then_some(entry.exe)
+    })
+}
+
 /// Caminho rápido: só aliases/exemplos exatos (sem modelo). `None` = o modelo decide.
 pub fn route(catalog: &Catalog, utterance: &str) -> Option<RouteMatch> {
     let text = normalize(utterance);
@@ -304,9 +339,7 @@ pub fn route(catalog: &Catalog, utterance: &str) -> Option<RouteMatch> {
             continue;
         }
         let slots = extract_slots(intent, utterance, &text);
-        // Pedido composto ("abre o chrome e entra no g1") não é um intent só: deixa o modelo planejar.
-        let rest = text.replacen(&alias, "", 1);
-        if rest.split_whitespace().count() > 4 && intent.needs_slot.is_none() && slots.len() <= 1 {
+        if is_composite(&text, &alias, intent, &slots) {
             return None;
         }
         return Some(RouteMatch { id: intent.id.clone(), risk: intent.risk.clone(), slots, alias });
@@ -339,6 +372,9 @@ pub enum Decision {
     Confirm(String),
     Deny(String),
 }
+
+/// Intents que abrem uma janela nova (o executor espera ela aparecer).
+const OPENING_INTENTS: &[&str] = &["open_browser", "open_url", "browser_search", "open_explorer", "open_app", "open_vscode", "open_path", "open_settings"];
 
 /// Intents que só leem o estado do PC (liberados em "Somente leitura").
 const READ_ONLY_INTENTS: &[&str] = &[
@@ -512,6 +548,11 @@ pub fn run_intent(app: &AppHandle, id: &str, slots: &HashMap<String, String>) ->
         return read_skill_file(app, "catalogo/INDEX.md");
     }
     let mut slots = slots.clone();
+    if let Some(app_name) = slots.get("app").cloned() {
+        if let Some(exe) = resolve_app_alias(&dir, &app_name) {
+            slots.insert("app".into(), exe);
+        }
+    }
     if id == "open_browser" && slots.get("browser").map_or(true, |value| value == "default" || value.is_empty()) {
         slots.insert("browser".into(), preferred_browser(&dir));
     }
@@ -530,9 +571,23 @@ pub fn run_intent(app: &AppHandle, id: &str, slots: &HashMap<String, String>) ->
             command.arg(flag).arg(value);
         }
     }
+    let before = computer::foreground_title();
     let (ok, output) = run_with_timeout(command, Duration::from_secs(30))?;
     log_action(app, json!({ "tool": "run_intent", "intent": id, "slots": slots, "ok": ok, "at": now() }));
-    if ok { Ok(output) } else { Err(output) }
+    if !ok {
+        return Err(output);
+    }
+    // Intents que abrem algo: espera a janela nova aparecer para o próximo passo agir nela.
+    if OPENING_INTENTS.contains(&id) {
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(6) && computer::foreground_title() == before {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        return Ok(format!("{output}
+Janela da frente agora: \"{}\"", computer::foreground_title()));
+    }
+    Ok(output)
 }
 
 pub fn run_command(app: &AppHandle, shell: &str, command_text: &str, cwd: Option<&str>) -> Result<String, String> {
@@ -655,10 +710,18 @@ pub fn web_search(query: &str) -> Result<String, String> {
     let result_regex = Regex::new(r#"(?s)class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>"#)
         .map_err(|error| error.to_string())?;
     let mut lines = Vec::new();
-    for (index, captures) in result_regex.captures_iter(&html).take(6).enumerate() {
+    for captures in result_regex.captures_iter(&html) {
         let mut link = captures[1].to_string();
+        // Anúncios passam por duckduckgo.com/y.js e não trazem `uddg=`: ficam de fora.
+        if link.contains("/y.js") || link.contains("ad_domain=") {
+            continue;
+        }
         if let Some(target) = link.split("uddg=").nth(1) {
             link = percent_decode(target.split('&').next().unwrap_or(target));
+        }
+        let index = lines.len();
+        if index >= 6 {
+            break;
         }
         let title = html_to_text(&captures[2]);
         let snippet = html_to_text(&captures[3]);
@@ -827,16 +890,42 @@ fn execute(app: &AppHandle, tool: &str, args: &Value) -> ToolOutcome {
         "read_url" => outcome(read_url(&string("url"), args.get("max_chars").and_then(Value::as_u64).unwrap_or(6000) as usize)),
         "read_skill_file" => outcome(read_skill_file(app, &string("path"))),
         "ask_user" => ToolOutcome { status: "ok".into(), text: string("question"), ..Default::default() },
+        name if name.starts_with("mcp__") => match mcp::call(app, name, args) {
+            Ok(output) => ToolOutcome {
+                status: if output.is_error { "error".into() } else { "ok".into() },
+                text: truncate(&output.text, 8000),
+                image: output.image,
+                ..Default::default()
+            },
+            Err(error) => outcome(Err(error)),
+        },
         other => outcome(Err(format!("Ferramenta desconhecida: {other}"))),
     }
 }
 
 // ---------------------------------------------------------------- comandos Tauri
 
-/// Instala a skill (se preciso) e monta o prompt de sistema + ferramentas do agente.
+/// Instala a skill (se preciso), liga os conectores MCP habilitados e monta prompt + ferramentas.
 #[tauri::command]
-pub fn agent_prepare(app: AppHandle) -> Result<AgentSetup, String> {
+pub async fn agent_prepare(app: AppHandle) -> Result<AgentSetup, String> {
+    tauri::async_runtime::spawn_blocking(move || prepare_blocking(&app)).await.map_err(|error| error.to_string())?
+}
+
+fn prepare_blocking(app: &AppHandle) -> Result<AgentSetup, String> {
+    let app = app.clone();
     let dir = ensure_skill(&app)?;
+    mcp::ensure_started(&app);
+    let mut tools = tool_definitions().as_array().cloned().unwrap_or_default();
+    let connectors = mcp::tool_definitions(&app);
+    let connector_note = if connectors.is_empty() {
+        String::new()
+    } else {
+        format!("
+
+## Conectores MCP ligados
+{} ferramentas `mcp__*` extras (ver references/mcp.md). Use-as quando forem mais precisas que look/click.", connectors.len())
+    };
+    tools.extend(connectors);
     let skill = fs::read_to_string(dir.join("SKILL.md")).unwrap_or_else(|_| SKILL_FILES[0].1.to_string());
     let preferences = fs::read_to_string(dir.join("memoria").join("preferencias.md")).unwrap_or_default();
     let catalog = load_catalog(&app);
@@ -847,7 +936,7 @@ pub fn agent_prepare(app: AppHandle) -> Result<AgentSetup, String> {
         preferences.trim(),
         std::env::var("USERPROFILE").unwrap_or_default()
     );
-    Ok(AgentSetup { system_prompt, tools: tool_definitions(), skill_dir: dir.to_string_lossy().into_owned() })
+    Ok(AgentSetup { system_prompt: format!("{system_prompt}{connector_note}"), tools: Value::Array(tools), skill_dir: dir.to_string_lossy().into_owned() })
 }
 
 /// Caminho rápido: devolve o intent quando a frase bate com um alias do catálogo.
@@ -910,6 +999,21 @@ mod tests {
     fn composite_requests_go_to_the_model() {
         assert!(route(&catalog(), "abre o chrome e entra no site do g1 e procura noticias de tecnologia").is_none());
         assert!(route(&catalog(), "me explica o que é uma GPU").is_none());
+        assert!(route(&catalog(), "abre a calculadora do windows e calcula 12 vezes 8 clicando nos botões").is_none());
+        let single = route(&catalog(), "abre o notepad").expect("intent simples");
+        assert_eq!(single.id, "open_app");
+        assert_eq!(single.slots.get("app").map(String::as_str), Some("notepad"));
+    }
+
+    #[test]
+    fn spoken_app_names_resolve_through_apps_yaml() {
+        let dir = std::env::temp_dir().join(format!("oa-apps-{}", std::process::id()));
+        fs::create_dir_all(dir.join("memoria")).unwrap();
+        fs::write(dir.join("memoria").join("apps.yaml"), SKILL_FILES.iter().find(|(name, _)| *name == "memoria/apps.yaml").unwrap().1).unwrap();
+        assert_eq!(resolve_app_alias(&dir, "calculadora").as_deref(), Some("calc"));
+        assert_eq!(resolve_app_alias(&dir, "Bloco de Notas").as_deref(), Some("notepad"));
+        assert_eq!(resolve_app_alias(&dir, "programa inexistente"), None);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -111,6 +111,7 @@ export class VoiceCapture {
   }
 }
 
+/** Microfones do Windows (sem o apelido "communications"). */
 export async function listMicrophones(): Promise<MediaDeviceInfo[]> {
   if (!navigator.mediaDevices?.enumerateDevices) return [];
   const devices = await navigator.mediaDevices.enumerateDevices();

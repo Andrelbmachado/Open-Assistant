@@ -41,6 +41,9 @@ npm start
   - Escolha de microfone e botão **Testar microfone** (grava, detecta o fim da fala e mostra a transcrição).
   - A DLL do sherpa-onnx é *delay-loaded*: o exe abre sem ela; a runtime é baixada junto com o primeiro modelo de voz.
 - **Ferramentas de IA** (Configurações › Ferramentas de IA), agrupadas por empresa (NVIDIA, Microsoft, Meta, Google, OpenAI, Open source) e filtráveis por tipo. Cada item tem receita fixa em `src-tauri/src/tools.rs` (a interface só envia o id): download com progresso, ambientes Python isolados via `uv` (NeMo, NeMo Guardrails, WhisperLive, AutoGen, Florence-2, MMS) e modelos do Ollama (Phi-4, Llama 3.2 Vision, Gemma 3). Seamless, LLaMA-Omni e TensorRT-LLM aparecem como indisponíveis no Windows, com o motivo. Tudo fica em `%LOCALAPPDATA%\com.openassistant.windows\tools`.
+- **Agente que controla o PC** (botão **Controlar o PC** no chat): skill `controle-do-windows` com catálogo de ações (abre apps/sites, volume, rede, arquivos, git) executadas sem gastar tokens, comandos PowerShell/cmd, busca web enxuta, leitura da tela por UI Automation, prints numerados (Set-of-Mark), mouse próprio que anima até o alvo e teclado. Permissões em **+ › Acesso ao computador** (Perguntar / Automático / Somente leitura); comandos perigosos são bloqueados e destrutivos sempre pedem confirmação; levar o mouse ao canto superior esquerdo interrompe.
+- **Conectores MCP** (Configurações › Conectores MCP): Playwright, Windows-MCP, Fetch e outros, no formato do Claude Desktop.
+- **Para IAs editarem o projeto**: `AGENTS.md` (mapa, comandos, convenções), `docs/ARCHITECTURE.md` e `docs/ROADMAP.md`.
 - **Workspace Flexível com Painéis Divididos:**
   - Layout dinâmico estilo Blender com divisão horizontal e vertical, arraste e redimensionamento.
   - Suporte a alternância entre Chat, Workflow Nodes, Terminal, Agentes, Arquivos de Código e Painel de Controle (Dashboard).

@@ -36,8 +36,10 @@ export interface ToolInfo {
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
 
+/** Ordem dos grupos na aba Ferramentas de IA. */
 export const COMPANY_ORDER: ToolCompany[] = ["NVIDIA", "Microsoft", "Meta", "Google", "OpenAI", "Open source"];
 
+/** Rótulo de cada tipo de ferramenta (filtros). */
 export const CATEGORY_LABELS: Record<ToolCategory, string> = {
   asr: "Voz → texto",
   tts: "Texto → voz",
@@ -47,8 +49,10 @@ export const CATEGORY_LABELS: Record<ToolCategory, string> = {
   runtime: "Runtime",
 };
 
+/** Id da runtime de voz (instalada junto com o primeiro modelo de voz). */
 export const SHERPA_RUNTIME_ID = "sherpa-onnx";
 
+/** Todas as ferramentas oferecidas; `install.kind` diz como baixar. */
 export const TOOL_CATALOG: ToolInfo[] = [
   // NVIDIA
   { id: "asr-nemo-pt", name: "NeMo FastConformer Português", company: "NVIDIA", category: "asr", usage: "voice-input", install: { kind: "recipe" }, sizeBytes: 102 * MB, repo: "https://huggingface.co/nvidia/stt_pt_fastconformer_hybrid_large_pc", languages: "Português", recommended: true, description: "Modelo de voz da NVIDIA treinado em português, com pontuação. Leve e muito rápido: transcreve 5 s de fala em ~0,1 s na CPU." },
@@ -88,10 +92,12 @@ export const TOOL_CATALOG: ToolInfo[] = [
   { id: "tts-piper-dii", name: "Voz Dii (pt-BR)", company: "Open source", category: "tts", usage: "voice-output", install: { kind: "recipe" }, sizeBytes: 21 * MB, repo: "https://github.com/rhasspy/piper", languages: "Português do Brasil", description: "Voz feminina de alta qualidade (Piper/VITS)." },
 ];
 
+/** Busca uma ferramenta pelo id. */
 export function toolById(id: string): ToolInfo | undefined {
   return TOOL_CATALOG.find((tool) => tool.id === id);
 }
 
+/** Modelos de reconhecimento de voz (aba Voz). */
 export const ASR_MODELS = TOOL_CATALOG.filter((tool) => tool.usage === "voice-input");
 export const TTS_VOICES = TOOL_CATALOG.filter((tool) => tool.usage === "voice-output");
 
