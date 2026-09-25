@@ -7,9 +7,11 @@ import { Sidebar } from "./components/Sidebar";
 import { TitleBar } from "./components/TitleBar";
 import { Workspace } from "./components/Workspace";
 import { useStore } from "./store/store";
+import { useMemoryFileSync } from "./store/memoryFile";
 
 export default function App() {
   const { dispatch } = useStore();
+  useMemoryFileSync();
   useEffect(() => {
     invoke("app_ready").catch(() => undefined);
     const shortcuts = (event: KeyboardEvent) => {

@@ -111,7 +111,22 @@ Resumo do que foi feito está em "Resultados verificados (sessão 3)" abaixo; o 
   só `mcp_tools`/`mcp_call` quando passam de 12 ferramentas.
 - Testes: 127 (vitest) + 51 (cargo).
 
-## Próximos passos sugeridos (sessão 4)
+## 9. Controle automático, calculadora e memória em arquivo (sessão 4, 2026-09-25) — concluído
+- [x] Botão "Controlar o PC" removido: pedido claro de ação → agente direto; conversa → o modelo recebe a ferramenta
+  `controlar_computador` e, se chamar, o agente assume na mesma mensagem (nuvem/BitNet: marcador `[[CONTROLAR_PC]]`).
+- [x] Teste real: "abre o chrome, entra no youtube e coloca o vídeo Never Gonna Give You Up do Rick Astley" → vídeo oficial
+  aberto (1ª versão da receita: 20 passos/118 s). Com a receita nova (`web_search` → link `watch?v=` → `open_url` no Chrome):
+  "abre o chrome e coloca o vídeo Despacito do Luis Fonsi no youtube" → 3 passos, 27 s, janela
+  "Luis Fonsi feat. Daddy Yankee - Despacito (Official Music Video) - YouTube - Google Chrome".
+- [x] Skill `abrir-programas` (também `references/abrir-programas.md`): Chrome, Edge, Office, VS Code, ms-settings:,
+  apps da Store por protocolo, qualquer app do menu Iniciar, sites, YouTube (busca, vídeo, canal, atalhos do player).
+  `dispatch.ps1`: `open_url` aceita `browser` (abre no Chrome) e `open_app` cai no menu Iniciar quando o nome não é um executável.
+- [x] Calculadora do app: contas básicas sem modelo ("quanto é 12 x 8?" → card 12 × 8 = 96 em 1 s).
+- [x] Memória em arquivo: `%LOCALAPPDATA%\com.openassistant.windows\memoria-da-ia.md` (criado com "me chame de André").
+  Resposta de teste: "Olá, André!".
+- [x] "Pensando" antes do Pac-Man, sem reticências; texto +10 %, Pac-Man −10 %.
+
+## Próximos passos sugeridos (sessão 5)
 - Testar Gemini/OpenAI/Anthropic com chave real (o código segue o formato oficial, mas não há chave salva para testar).
 - Camada semântica com modelo de embedding de verdade (ex.: `embeddinggemma`/`nomic-embed-text` no Ollama, na CPU) como
   segunda opinião quando o trigrama der só "sugestão"; hoje os trigramas cobrem nomes e erros de digitação, não sinônimos.

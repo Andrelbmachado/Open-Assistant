@@ -1,6 +1,6 @@
 /**
- * Pedido de ação no computador com o modo "Controlar o PC" desligado.
- * Em vez de deixar o modelo dizer "não consigo abrir programas", o chat oferece ligar o modo.
+ * Pedido claro de ação no computador ("abre o chrome e entra no youtube"): o chat passa direto para o
+ * agente que controla o PC, sem gastar uma resposta do modelo para decidir isso.
  */
 
 const normalize = (text: string) => text.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();

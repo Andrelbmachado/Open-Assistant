@@ -31,6 +31,15 @@ Por quê: cada print custa ~1000 tokens e deixa o modelo lento; uma lista de ele
 7. Se `look` mostrar uma janela diferente da esperada, use `focus_window` com o nome do app. Nunca feche janelas nem mate processos (Explorer, Chrome…) para "arrumar" a tela.
 8. Para *ler* o conteúdo de um site aberto, `read_url` com o endereço costuma ser mais rápido e completo que prints.
 
+## Abrir programas, sites e vídeos (exemplos reais: `references/abrir-programas.md`)
+
+- Programa: `run_intent open_app {"app":"chrome"}` (também `notepad`, `calc`, `winword`, `excel`, `mspaint`, `taskmgr`,
+  `ms-settings:`, ou o nome do menu Iniciar: `{"app":"photoshop"}`).
+- Site no Chrome: `run_intent open_url {"url":"https://www.youtube.com","browser":"chrome"}`.
+- Vídeo específico no YouTube (3 passos): `web_search "<título> youtube"` → pegue o link `youtube.com/watch?v=…` →
+  `run_intent open_url {"url":"<link>","browser":"chrome"}` → `look` para conferir "<título> - YouTube".
+  Não clique na lista de resultados do YouTube (erra muito); só use a busca do site se a pesquisa não trouxer o link.
+
 Exemplo — "entra no site do g1":
 `run_intent open_browser` → `press_keys ctrl+l` → `type_text "g1.globo.com" enter:true` → `look elements` → responder "Pronto, o g1 está aberto."
 
@@ -49,6 +58,7 @@ Detalhes do Chrome (abas, perfis, DevTools, MCP): `references/chrome.md`.
 | Arquivo | Quando ler |
 |---|---|
 | `catalogo/INDEX.md` | lista de intents com risco (sempre útil no primeiro pedido de ação) |
+| `references/abrir-programas.md` | como abrir qualquer programa, site, vídeo do YouTube, pasta ou tela de configuração |
 | `references/comandos-windows.md` | comandos cmd/PowerShell por tarefa (arquivos, processos, rede, winget, serviços, registro) |
 | `references/chrome.md` | controlar o Chrome e sites |
 | `references/automacao.md` | scripts automatizadores: tarefas agendadas, AutoHotkey, lotes |

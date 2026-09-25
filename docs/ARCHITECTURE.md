@@ -10,12 +10,17 @@ PowerShell, servidores MCP) e APIs do Windows (UI Automation, SendInput, captura
 1. **Memória** — `memory.detectMemory` lê pedidos como "não use emojis" / "me chame de Dé" / "lembre que…" (regex, sem
    modelo) e grava em `state.memory`; `memory.memoryPrompt` vira um bloco somado ao prompt de sistema do chat comum,
    da nuvem e do agente. Configurações › Memória edita tudo (nome, apelido, estilos, fatos).
-2. **Ação rápida** (com "Controlar o PC" desligado também) — `agentRunner.matchAction`: `agent_route` (alias exato do
+2. **Calculadora** — `calc.parseCalculation` resolve contas básicas ("quanto é 12 x 8", "15% de 200", "raiz de 81")
+   com avaliador próprio e mostra o `CalculatorCard` na resposta (rodapé "Calculadora do app · sem tokens").
+3. **Ação rápida** — `agentRunner.matchAction`: `agent_route` (alias exato do
    `intents.yaml`) e depois `agent_semantic` (`semantic.rs`: vetores de trigramas na CPU sobre intents sem parâmetro,
    `memoria/apps.yaml`, apps do menu Iniciar em cache e sites comuns). ≥ 0,82 executa direto (`runCatalogAction`, mesma
    política do agente, rodapé "Ação rápida · sem tokens"); 0,65–0,82 vira sugestão. Se não reconheceu mas
-   `pcIntent.looksLikePcAction` diz que é ação no PC, a resposta é a oferta **"Ligar Controlar o PC e executar"** (sem modelo).
-3. **"/skill" e "@conector"** escolhidos no compositor (`composerMentions.findMention`, `list_skills`, `mcp_overview`)
+   `pcIntent.looksLikePcAction` diz que é ação no PC (ou houve sugestão), o **agente assume sozinho**.
+4. **Conversa** — `askAI` com `allowComputerControl`: no Ollama o modelo recebe a ferramenta única `controlar_computador`
+   (nuvem/BitNet: marcador `[[CONTROLAR_PC]]`); se ele pedir, a mesma mensagem vira uma tarefa do agente. Não há botão:
+   a IA decide quando precisa controlar o PC. O agente usa o modelo do Ollama do chat (ou o local preferido).
+5. **"/skill" e "@conector"** escolhidos no compositor (`composerMentions.findMention`, `list_skills`, `mcp_overview`)
    mandam a mensagem para o agente; com "@", só as ferramentas daquele conector vão para o modelo.
 
 ### Chat normal
@@ -24,7 +29,7 @@ cada lote de tokens vira o evento **`ollama-chat-delta`** `{requestId, content, 
 Parar: `ollama_cancel_chat(requestId)`. BitNet: mesmo caminho com `bitnet_chat` (servidor bitnet.cpp em 127.0.0.1:18090).
 Imagens anexadas vão em `messages[].images` (base64); modelo sem visão recebe erro claro (só se a *última* mensagem tiver imagem).
 
-### Agente "Controlar o PC"
+### Agente que controla o PC
 ```
 ChatView (agentMode) → agentRunner.runAgent
    ├─ agent_route(texto) ── alias do intents.yaml? ── sim → agent_tool("run_intent") → dispatch.ps1 → fim (sem modelo)
@@ -65,7 +70,7 @@ build do bitnet.cpp) → evento **`tool-progress`** `{toolId, state, phase, comp
 Tudo em `%LOCALAPPDATA%\com.openassistant.windows\tools\<id>` com marcador `.installed`.
 
 ### Conectores MCP
-`mcp.json` (formato Claude Desktop) → `mcp::ensure_started` (no `agent_prepare`, ao ligar "Controlar o PC" via
+`mcp.json` (formato Claude Desktop) → `mcp::ensure_started` (no `agent_prepare`, 4 s depois de abrir o chat via
 `warmAgent`, ou "Iniciar ligados") inicia **em paralelo** cada servidor com `cmd /c <command> <args>`, faz `initialize` +
 `tools/list` e espera no máximo 15 s; os lentos continuam em segundo plano (`pendingConnectors` faz o front preparar de novo
 na próxima tarefa) → ferramentas entram no agente → `tools/call` no `agent_tool`.
@@ -92,6 +97,7 @@ na próxima tarefa) → ferramentas entram no agente → `tools/call` no `agent_
 ## Dados em disco
 `%LOCALAPPDATA%\com.openassistant.windows\`: `EBWebView` (localStorage do app), `tools\` (ferramentas baixadas),
 `skills\controle-do-windows\` (skill editável; `memoria\` nunca é sobrescrita; `logs\acoes.jsonl` registra cada ação;
-`cache\startapps.json` = apps do menu Iniciar, renovado a cada 24 h), `mcp.json`. A memória do usuário fica no localStorage
-(`open-assistant-state-v2` → `memory`). Chaves de nuvem: Gerenciador de Credenciais do Windows (Google/Gemini usa o
+`cache\startapps.json` = apps do menu Iniciar, renovado a cada 24 h), `mcp.json`. A memória do usuário fica em
+`memoria-da-ia.md` (Markdown editável; lido ao abrir e ao voltar para a janela, gravado a cada mudança — `store/memoryFile.ts`).
+Skills extras (ex.: `skills\abrir-programas\SKILL.md`) ficam ao lado de `controle-do-windows` e entram no prompt com "/nome". Chaves de nuvem: Gerenciador de Credenciais do Windows (Google/Gemini usa o
 endpoint compatível com OpenAI em `generativelanguage.googleapis.com/v1beta/openai`).

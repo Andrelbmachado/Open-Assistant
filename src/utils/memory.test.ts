@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyDetected, detectMemory, EMPTY_MEMORY, memoryPrompt, restoreMemory } from "./memory";
+import { applyDetected, detectMemory, EMPTY_MEMORY, memoryPrompt, parseMemoryFile, restoreMemory, serializeMemoryFile } from "./memory";
 
 describe("detectMemory", () => {
   it("learns explicit preferences", () => {
@@ -48,5 +48,25 @@ describe("applyDetected + memoryPrompt", () => {
   it("restores broken saved data safely", () => {
     expect(restoreMemory(null)).toEqual(EMPTY_MEMORY);
     expect(restoreMemory({ name: 3, facts: [{ id: "a", text: "ok" }, null], learn: false })).toMatchObject({ name: "", facts: [{ id: "a", text: "ok" }], learn: false });
+  });
+});
+
+describe("memoria-da-ia.md", () => {
+  it("round-trips name, nickname, styles, extra instructions and facts", () => {
+    const memory = { ...EMPTY_MEMORY, name: "André", callMe: "André", styles: ["direct", "no-emoji"], about: "Fale em português do Brasil.", facts: [{ id: "1", text: "Usa Windows 11", source: "auto" as const, createdAt: 0 }, { id: "2", text: "Trabalha com design", source: "manual" as const, createdAt: 0 }] };
+    const text = serializeMemoryFile(memory);
+    expect(text).toContain("- Apelido: André");
+    expect(text).toContain("- [x] Sem emojis");
+    const parsed = parseMemoryFile(text);
+    expect(parsed).toMatchObject({ name: "André", callMe: "André", styles: ["direct", "no-emoji"], about: "Fale em português do Brasil.", learn: true });
+    expect(parsed.facts.map((fact) => [fact.text, fact.source])).toEqual([["Usa Windows 11", "auto"], ["Trabalha com design", "manual"]]);
+  });
+
+  it("reads a hand-edited file", () => {
+    const parsed = parseMemoryFile("## Como me chamar\r\n- Apelido: André\r\n\r\n## Aprendido nas conversas\r\n* Não usar emojis\r\n");
+    expect(parsed.callMe).toBe("André");
+    expect(parsed.facts.map((fact) => fact.text)).toEqual(["Não usar emojis"]);
+    expect(serializeMemoryFile(EMPTY_MEMORY)).toContain("- (nada ainda)");
+    expect(parseMemoryFile(serializeMemoryFile(EMPTY_MEMORY)).facts).toEqual([]);
   });
 });

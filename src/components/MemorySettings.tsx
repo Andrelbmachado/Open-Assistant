@@ -1,4 +1,5 @@
-import { Brain, Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { Brain, Check, FileText, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { useStore } from "../store/store";
 import { memoryPrompt, STYLE_OPTIONS } from "../utils/memory";
@@ -34,7 +35,7 @@ export function MemorySettings() {
   }
 
   return <div className="memory-settings">
-    <div className="settings-heading"><span>Memória</span><h3>O que a IA sabe sobre você</h3><p>Vale para todas as conversas: chat, Controlar o PC e modelos em nuvem. Fica só neste computador.</p></div>
+    <div className="settings-heading runtime-heading"><div><span>Memória</span><h3>O que a IA sabe sobre você</h3><p>Vale para todas as conversas e modelos. Fica só neste computador, no arquivo memoria-da-ia.md.</p></div><button className="flat-button" onClick={() => void invoke("memory_file_open").catch(() => undefined)} title="Abre memoria-da-ia.md no Bloco de Notas"><FileText size={14} />Abrir arquivo</button></div>
 
     <div className="setting-card memory-card">
       <label>Como te chamar</label>

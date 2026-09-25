@@ -305,6 +305,39 @@ fn read_credential(
     }
 }
 
+/// `%LOCALAPPDATA%\com.openassistant.windows\memoria-da-ia.md`: a memória da IA em Markdown editável.
+fn memory_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path().app_local_data_dir().map(|dir| dir.join("memoria-da-ia.md")).map_err(|error| error.to_string())
+}
+
+/// Lê o arquivo de memória (None se ainda não existe).
+#[tauri::command]
+fn memory_file_read(app: AppHandle) -> Result<Option<String>, String> {
+    let path = memory_file_path(&app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    std::fs::read_to_string(&path).map(Some).map_err(|error| format!("Não foi possível ler a memória: {error}"))
+}
+
+/// Grava o arquivo de memória (o front serializa com `serializeMemoryFile`).
+#[tauri::command]
+fn memory_file_write(app: AppHandle, text: String) -> Result<String, String> {
+    let path = memory_file_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(&path, text).map_err(|error| format!("Não foi possível gravar a memória: {error}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Abre o arquivo de memória no Bloco de Notas.
+#[tauri::command]
+fn memory_file_open(app: AppHandle) -> Result<(), String> {
+    let path = memory_file_path(&app)?;
+    std::process::Command::new("notepad.exe").arg(path).spawn().map(|_| ()).map_err(|error| error.to_string())
+}
+
 /// Diz se há chave salva sem devolvê-la (o seletor de modelos só precisa saber se existe).
 #[tauri::command]
 fn has_credential(app: AppHandle, state: State<AppState>, account: String) -> bool {
@@ -1523,6 +1556,9 @@ pub fn run() {
             read_credential,
             delete_credential,
             has_credential,
+            memory_file_read,
+            memory_file_write,
+            memory_file_open,
             check_local_runtime_status,
             start_runtime,
             scan_hardware,
@@ -1545,6 +1581,7 @@ pub fn run() {
             agent::agent_route,
             semantic::agent_semantic,
             agent::list_skills,
+            agent::read_skill,
             agent::agent_tool,
             agent::agent_finish,
             mcp::mcp_overview,

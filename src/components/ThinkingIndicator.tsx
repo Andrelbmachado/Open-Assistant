@@ -17,7 +17,7 @@ interface ThinkingIndicatorProps {
   preview?: string;
 }
 
-/** Linha "pensando" com Pac-Man, verbo, cronômetro e prévia do raciocínio do modelo. */
+/** Linha "Pensando" seguida do Pac-Man, cronômetro e prévia do raciocínio do modelo. */
 export function ThinkingIndicator({ messageId, startedAt, tokens, preview }: ThinkingIndicatorProps) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -25,12 +25,12 @@ export function ThinkingIndicator({ messageId, startedAt, tokens, preview }: Thi
     const timer = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(timer);
   }, []);
-  const verb = `${thinkingVerb(messageId)}…`;
+  const verb = thinkingVerb(messageId);
   const stats = [formatElapsed(startedAt ? now - startedAt : 0), tokens ? `${formatTokenCount(tokens)} tokens de raciocínio` : undefined, "esc para interromper"].filter(Boolean).join(" · ");
   return <div className="thinking-indicator" role="status" aria-label={`${verb} ${stats}`}>
     <div className="thinking-line">
-      <PacmanLoader />
       <span className="thinking-verb">{verb}</span>
+      <PacmanLoader />
       <span className="thinking-stats">({stats})</span>
     </div>
     {preview && <div className="thinking-preview"><span>{preview.slice(-420)}</span></div>}

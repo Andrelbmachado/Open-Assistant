@@ -40,9 +40,29 @@ function Resolve-Browser {
 
 function Open-DefaultUrl {
     param([string]$Target)
-    if ($WhatIf) { Say "WHATIF: start $Target"; return }
+    # -Browser chrome/edge/firefox abre no navegador pedido; senão, no padrão do Windows.
+    $b = Resolve-Browser $Browser
+    if ($WhatIf) { Say "WHATIF: start $Target ($Browser)"; return }
+    if ($b) {
+        try {
+            Start-Process $b[0] -ArgumentList $Target | Out-Null
+            Say "OK: aberto $Target no $($b[1])"
+            return
+        } catch { }
+    }
     Start-Process $Target | Out-Null
     Say "OK: aberto $Target"
+}
+
+# Acha um app do menu Iniciar pelo nome ("photoshop" -> "Adobe Photoshop 2025") e abre pelo AppID.
+function Open-StartApp {
+    param([string]$Name)
+    $apps = @(Get-StartApps | Where-Object { $_.Name -like "*$Name*" -and $_.Name -notmatch '(?i)uninstall|desinstalar' })
+    if ($apps.Count -eq 0) { return $false }
+    $app = $apps | Sort-Object { $_.Name.Length } | Select-Object -First 1
+    Start-Process "shell:AppsFolder\$($app.AppID)" | Out-Null
+    Say "OK: $($app.Name)"
+    return $true
 }
 
 switch ($Intent) {
@@ -102,8 +122,13 @@ switch ($Intent) {
             Start-Process $exe | Out-Null
             Say "OK: $App"
         } else {
-            Start-Process $App | Out-Null
-            Say "OK: $App (nome cru)"
+            # Nome cru (chrome, winword, ms-settings:, shell:AppsFolder\...); se o Windows não achar, procura no menu Iniciar.
+            try {
+                Start-Process $App -ErrorAction Stop | Out-Null
+                Say "OK: $App"
+            } catch {
+                if (-not (Open-StartApp $App)) { throw "nao achei o programa '$App' (tente o nome do menu Iniciar)" }
+            }
         }
     }
     "open_vscode" {

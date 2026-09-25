@@ -451,3 +451,21 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .setting-card.memory-preview { display: block; min-height: 0; }
 .model-picker .model-row-name { min-width: 0; overflow: hidden; }
 .model-picker .model-row-name code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Rodada 2026-09-25 (4) ------------------------------------------------------------ */
+/* "Pensando" antes do Pac-Man, sem reticências: texto 10% maior e Pac-Man 10% menor para terem a mesma altura. */
+.thinking-verb { font-size: 14.3px; }
+.thinking-line .pacman-loader { zoom: .9; margin-left: 2px; }
+
+/* Calculadora do app dentro da resposta (contas sem modelo). */
+.calc-card { width: 250px; margin: 4px 0 2px; padding: 10px; border: 1px solid rgba(255, 255, 255, .08); border-radius: 14px; background: #1c1c1e; }
+.calc-display { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 6px 8px 10px; }
+.calc-display small { min-height: 16px; max-width: 100%; overflow: hidden; color: #8e8e96; font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.calc-display strong { max-width: 100%; overflow: hidden; color: #f5f5f7; font-size: 30px; font-weight: 300; font-variant-numeric: tabular-nums; text-overflow: ellipsis; }
+.calc-keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.calc-keys button { height: 38px; display: grid; place-items: center; border: 0; border-radius: 10px; background: #2c2c2e; color: #f2f2f4; font-size: 15px; cursor: pointer; }
+.calc-keys button:hover { background: #3a3a3d; }
+.calc-keys button.operator { background: #283047; color: #9cc2ff; }
+.calc-keys button.muted { background: #232325; color: #a1a1a8; }
+.calc-keys button.equals { background: #2f6bff; color: #fff; }
+.calc-keys button.equals:hover { background: #4a7dff; }

@@ -20,15 +20,6 @@ export interface ActionCandidate {
   score?: number;
 }
 
-/** Pedido de ação no PC feito com "Controlar o PC" desligado: o chat oferece ligar e executar. */
-export interface ActionOffer {
-  /** Texto original do pedido (reenviado ao agente). */
-  request: string;
-  /** Opções prováveis quando a frase não era exata ("Você quis dizer…"). */
-  candidates?: ActionCandidate[];
-  /** Já respondida (botão usado ou dispensado). */
-  resolved?: boolean;
-}
 
 /** "/skill" ou "@conector" escolhido no compositor. */
 export interface Invocation {
@@ -71,12 +62,12 @@ export interface ChatMessage {
   thinkingTokens?: number;
   /** Passos do agente (modo "Controlar o PC"), exibidos acima da resposta. */
   steps?: AgentStep[];
-  /** Oferta de ligar "Controlar o PC" para executar o pedido. */
-  offer?: ActionOffer;
   /** O que a IA aprendeu com a mensagem anterior (aviso "Memória atualizada"). */
   memoryNote?: string[];
   /** Skills/conectores invocados com "/" e "@" nesta mensagem do usuário. */
   invocations?: Invocation[];
+  /** Conta resolvida pela calculadora do app (sem modelo). */
+  calc?: { expression: string; result: string };
 }
 
 export interface WorkflowNode {
@@ -152,8 +143,6 @@ export interface AppState {
   faceVersion: number;
   effort: EffortLevel;
   voice: VoiceSettings;
-  /** Modo "Controlar o PC": as mensagens vão para o agente com ferramentas. */
-  agentMode: boolean;
   /** Permissão do agente: Perguntar / Automático / Somente leitura. */
   access: AccessMode;
   /** Memória do usuário (Configurações › Memória + o que a IA aprendeu); entra em todos os prompts. */
@@ -182,7 +171,6 @@ type Action =
   | { type: "setOrbitalSkin"; skin: OrbitalSkin }
   | { type: "setEffort"; effort: EffortLevel }
   | { type: "setVoice"; patch: Partial<VoiceSettings> }
-  | { type: "setAgentMode"; on: boolean }
   | { type: "setAccess"; access: AccessMode }
   | { type: "setMemory"; patch: Partial<UserMemory> }
   | { type: "updateFact"; id: string; text: string }
@@ -257,7 +245,6 @@ const initialState: AppState = {
   faceVersion: 2,
   effort: DEFAULT_EFFORT,
   voice: { language: "pt", speed: 1 },
-  agentMode: false,
   access: "Perguntar",
   memory: EMPTY_MEMORY,
   activeChatId: "welcome",
@@ -315,7 +302,6 @@ function reducer(state: AppState, action: Action): AppState {
     case "setOrbitalSkin": return { ...state, orbitalSkin: action.skin };
     case "setEffort": return { ...state, effort: action.effort };
     case "setVoice": return { ...state, voice: { ...state.voice, ...action.patch } };
-    case "setAgentMode": return { ...state, agentMode: action.on };
     case "setAccess": return { ...state, access: action.access };
     case "setMemory": return { ...state, memory: { ...state.memory, ...action.patch } };
     case "addFact": return { ...state, memory: { ...state.memory, facts: [...state.memory.facts, action.fact] } };
@@ -458,7 +444,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const layoutIsCurrent = restored.layoutVersion === fallback.layoutVersion
         && isValidWorkspaceLayout(restored.workspaceLayout)
         && hasWorkspaceArea(restored.workspaceLayout, restored.activeAreaId);
-      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, orbitalSkin: restored.faceVersion === fallback.faceVersion && isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, faceVersion: fallback.faceVersion, effort: isEffortLevel(restored.effort) ? restored.effort : fallback.effort, voice: { ...fallback.voice, ...(restored.voice ?? {}) }, agentMode: restored.agentMode === true, access: ["Perguntar", "Automático", "Somente leitura"].includes(restored.access) ? restored.access : fallback.access, memory: restoreMemory(restored.memory), chats: layoutIsCurrent ? tidyChats(settleInterruptedMessages(restored.chats ?? fallback.chats), restored.activeChatId ?? fallback.activeChatId) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, settingsTab: undefined, settingsFocusModel: undefined, paletteOpen: false };
+      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, orbitalSkin: restored.faceVersion === fallback.faceVersion && isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, faceVersion: fallback.faceVersion, effort: isEffortLevel(restored.effort) ? restored.effort : fallback.effort, voice: { ...fallback.voice, ...(restored.voice ?? {}) }, access: ["Perguntar", "Automático", "Somente leitura"].includes(restored.access) ? restored.access : fallback.access, memory: restoreMemory(restored.memory), chats: layoutIsCurrent ? tidyChats(settleInterruptedMessages(restored.chats ?? fallback.chats), restored.activeChatId ?? fallback.activeChatId) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, settingsTab: undefined, settingsFocusModel: undefined, paletteOpen: false };
     } catch { return fallback; }
   });
 

@@ -26,7 +26,7 @@ use tauri::{AppHandle, Manager};
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub const SKILL_NAME: &str = "controle-do-windows";
 /// Suba ao mudar os arquivos empacotados: a cópia em AppData é regravada (exceto `memoria/`).
-const SKILL_VERSION: &str = "2026-09-25.3";
+const SKILL_VERSION: &str = "2026-09-25.5";
 
 /// Arquivos da skill embutidos no executável (fonte: `src-tauri/skills/controle-do-windows`).
 const SKILL_FILES: &[(&str, &str)] = &[
@@ -50,10 +50,14 @@ const SKILL_FILES: &[(&str, &str)] = &[
     ("references/mcp.md", include_str!("../skills/controle-do-windows/references/mcp.md")),
     ("references/seguranca.md", include_str!("../skills/controle-do-windows/references/seguranca.md")),
     ("references/frases.md", include_str!("../skills/controle-do-windows/references/frases.md")),
+    ("references/abrir-programas.md", include_str!("../skills/abrir-programas/SKILL.md")),
     ("memoria/preferencias.md", include_str!("../skills/controle-do-windows/memoria/preferencias.md")),
     ("memoria/apps.yaml", include_str!("../skills/controle-do-windows/memoria/apps.yaml")),
     ("memoria/usuario.md", include_str!("../skills/controle-do-windows/memoria/usuario.md")),
 ];
+
+/// Outras skills empacotadas (pasta irmã de `controle-do-windows`), invocáveis com "/nome" no compositor.
+const EXTRA_SKILLS: &[(&str, &str)] = &[("abrir-programas", include_str!("../skills/abrir-programas/SKILL.md"))];
 
 // ---------------------------------------------------------------- skill em disco
 
@@ -81,6 +85,13 @@ pub fn ensure_skill(app: &AppHandle) -> Result<PathBuf, String> {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         fs::write(&path, content).map_err(|error| format!("Não foi possível gravar {relative}: {error}"))?;
+    }
+    if let Some(root) = dir.parent() {
+        for (name, content) in EXTRA_SKILLS {
+            let path = root.join(name).join("SKILL.md");
+            fs::create_dir_all(root.join(name)).map_err(|error| error.to_string())?;
+            fs::write(&path, content).map_err(|error| format!("Não foi possível gravar a skill {name}: {error}"))?;
+        }
     }
     fs::write(marker, SKILL_VERSION).map_err(|error| error.to_string())?;
     Ok(dir)
@@ -1028,6 +1039,18 @@ pub fn list_skills(app: AppHandle) -> Vec<SkillInfo> {
         .collect();
     skills.sort_by(|a, b| a.name.cmp(&b.name));
     skills
+}
+
+/// Texto de uma skill ("/abrir-programas") sem o cabeçalho YAML, para somar ao prompt do agente.
+#[tauri::command]
+pub fn read_skill(app: AppHandle, name: String) -> Result<String, String> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("Nome de skill inválido.".into());
+    }
+    let dir = ensure_skill(&app)?;
+    let root = dir.parent().ok_or("pasta de skills indisponível")?;
+    let text = fs::read_to_string(root.join(&name).join("SKILL.md")).map_err(|_| format!("Skill não encontrada: {name}"))?;
+    Ok(truncate(strip_frontmatter(&text).trim(), 14_000))
 }
 
 /// Caminho rápido: devolve o intent quando a frase bate com um alias do catálogo.

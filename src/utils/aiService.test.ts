@@ -38,7 +38,18 @@ describe("askAI", () => {
     const reply = await askAI("Ollama: qwen3.5:9b", [{ role: "user", content: "oi" }], { think: true });
 
     expect(invokeMock).toHaveBeenCalledWith("ollama_chat", expect.objectContaining({ model: "qwen3.5:9b", think: true }));
-    expect(reply).toEqual({ text: "Olá!", thinking: undefined, source: "Ollama (qwen3.5:9b)", tokensPerSecond: 61.2, cancelled: false });
+    expect(reply).toEqual({ wantsComputer: false, text: "Olá!", thinking: undefined, source: "Ollama (qwen3.5:9b)", tokensPerSecond: 61.2, cancelled: false });
+  });
+
+  it("oferece a ferramenta controlar_computador e avisa quando o modelo pede o controle do PC", async () => {
+    invokeMock.mockResolvedValue({ model: "qwen3.5:9b", content: "", thinking: "", cancelled: false, toolCalls: [{ function: { name: "controlar_computador", arguments: { motivo: "abrir o youtube" } } }] });
+
+    const reply = await askAI("Ollama: qwen3.5:9b", [{ role: "user", content: "coloca um vídeo de gatos" }], { allowComputerControl: true });
+
+    const args = invokeMock.mock.calls[0][1] as { options?: { tools: { function: { name: string } }[] }; messages: { content: string }[] };
+    expect(args.options?.tools.map((tool) => tool.function.name)).toEqual(["controlar_computador"]);
+    expect(args.messages[0].content).toContain("chame a ferramenta controlar_computador");
+    expect(reply.wantsComputer).toBe(true);
   });
 
   it("traduz o esforço em raciocínio, nível e instrução extra, e devolve os tokens de raciocínio", async () => {

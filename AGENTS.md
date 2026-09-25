@@ -28,13 +28,15 @@ src/                         Front (React)
     store.tsx                Estado global (reducer): chats, layout, tema, voz, agente, permissões
     localModelsStore.ts      Ollama: modelos instalados, hardware, downloads (useSyncExternalStore)
     toolsStore.ts            Ferramentas de IA baixáveis: instalado/progresso (evento tool-progress)
+    memoryFile.ts            Sincroniza a memória com %LOCALAPPDATA%\com.openassistant.windows\memoria-da-ia.md
   components/
     ChatView.tsx             Chat: mensagens, compositor, voz, anexos, modo agente, confirmações
     SettingsView.tsx         Modal de Configurações (abas)
     ToolsPanel.tsx           Aba "Ferramentas de IA" (por empresa)
     VoiceSettings.tsx        Aba "Voz" (microfone, reconhecimento, voz)
     McpPanel.tsx             Aba "Conectores MCP"
-    MemorySettings.tsx       Aba "Memória" (nome, apelido, estilo, fatos aprendidos)
+    MemorySettings.tsx       Aba "Memória" (nome, apelido, estilo, fatos aprendidos; abre memoria-da-ia.md)
+    CalculatorCard.tsx       Calculadora do app dentro da resposta
     LocalModelsPanel.tsx     Aba "Modelos locais" (Ollama)
     AgentCursor.tsx          Cursor próprio do agente (janela transparente)
     ThinkingIndicator.tsx    Indicador "pensando" (Pac-Man) e resumo do raciocínio
@@ -45,7 +47,8 @@ src/                         Front (React)
     agentRunner.ts           Loop do agente (rota rápida/semântica → Ollama com tools → agent_tool); matchAction, runCatalogAction
     aiService.ts             Chat normal com Ollama/BitNet/nuvem (streaming por evento); prompt diz que o app controla o PC
     memory.ts                Memória do usuário: detectMemory ("não use emojis"), memoryPrompt (bloco do prompt)
-    pcIntent.ts              looksLikePcAction: pedido de ação no PC com o modo desligado → oferta de ligar
+    pcIntent.ts              looksLikePcAction: pedido claro de ação no PC → o agente assume sozinho
+    calc.ts                  Contas básicas sem modelo (CalculatorCard mostra na resposta)
     composerMentions.ts      "/" skills e "@" conectores no compositor
     connectionStatus.ts      Linha/ponto sob o ícone de computador na barra lateral (verde = IA funcionando)
     cloudModels.ts           Provedores em nuvem (OpenAI, Anthropic, Google/Gemini…), modelos por provedor
@@ -72,6 +75,7 @@ src-tauri/                   Backend (Rust)
   src/speech.rs              Voz via sherpa-onnx (DLL baixada e carregada sob demanda)
   src/bitnet.rs              Servidor do bitnet.cpp + chat no formato nativo do BitNet
   skills/controle-do-windows/   Skill do agente (SKILL.md, intents.yaml, dispatch.ps1, catálogo, referências)
+  skills/abrir-programas/       Skill "/abrir-programas": exemplos reais de abrir programas, sites e vídeos do YouTube
   build.rs                   /DELAYLOAD das DLLs de voz
   capabilities/default.json  Permissões das janelas "main" e "agent-cursor"
 ```

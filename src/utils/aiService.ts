@@ -22,6 +22,8 @@ export interface AIReply {
   /** Tokens gastos no raciocínio, contados pelo backend. */
   thinkingTokens?: number;
   cancelled?: boolean;
+  /** O modelo pediu para controlar o PC (ferramenta `controlar_computador` ou marcador): o chat chama o agente. */
+  wantsComputer?: boolean;
 }
 
 export interface AIDelta {
@@ -39,6 +41,8 @@ export interface AskOptions {
   onDelta?: (delta: AIDelta) => void;
   /** Bloco de memória do usuário (`memoryPrompt`), somado ao prompt de sistema. */
   memory?: string;
+  /** Deixa o modelo decidir controlar o PC (ferramenta no Ollama, marcador nos outros). */
+  allowComputerControl?: boolean;
 }
 
 interface OllamaChatResult {
@@ -49,6 +53,7 @@ interface OllamaChatResult {
   tokensPerSecond?: number | null;
   evalCount?: number | null;
   thinkingTokens?: number | null;
+  toolCalls?: { function?: { name?: string } }[];
 }
 
 interface OllamaChatDelta extends AIDelta {
@@ -60,10 +65,24 @@ export const NO_LOCAL_MODEL_ERROR = "Nenhum modelo local selecionado. Baixe um m
 
 const SYSTEM_PROMPT = "Você é o Open Assistant, um assistente pessoal que roda localmente no computador Windows do usuário. Responda no idioma do usuário (por padrão, português do Brasil), de forma clara, direta e útil.";
 /**
- * O chat comum não executa ações, mas o app executa: nunca diga que é impossível.
- * Sem isto o modelo respondia "não consigo abrir o PowerShell, sou só um modelo de texto".
+ * O app controla o PC sozinho quando o modelo decide que precisa. Sem isto o modelo respondia
+ * "não consigo abrir o PowerShell, sou só um modelo de texto".
  */
-const APP_CAPABILITIES = "O app Open Assistant consegue controlar este PC (abrir programas e sites, clicar, digitar, executar comandos do PowerShell, usar conectores MCP) quando o botão \"Controlar o PC\", na barra de mensagem, está ligado. Nesta conversa ele está desligado: se o usuário pedir uma ação no computador, não diga que é impossível nem que você é só um modelo de texto; diga em uma frase que é só ligar \"Controlar o PC\" e reenviar o pedido.";
+const APP_CAPABILITIES = "Você controla este computador Windows pelo app Open Assistant: abre programas e sites, clica, digita, executa comandos do PowerShell, lê a tela e usa conectores MCP. Nunca diga que não consegue agir no computador nem que é só um modelo de texto.";
+/** Ferramenta única do chat comum: chamar = passar o pedido para o agente que controla o PC. */
+export const COMPUTER_TOOL_NAME = "controlar_computador";
+const COMPUTER_TOOL = {
+  type: "function",
+  function: {
+    name: COMPUTER_TOOL_NAME,
+    description: "Assume o controle do computador do usuário para cumprir o pedido. Chame quando o usuário pedir para agir no PC (abrir programas ou sites, clicar, digitar, executar comandos, ver a tela, mexer em arquivos, tocar um vídeo) ou quando você não conseguir cumprir a tarefa só respondendo com texto.",
+    parameters: { type: "object", properties: { motivo: { type: "string", description: "o que precisa ser feito no PC" } }, required: ["motivo"] },
+  },
+};
+const TOOL_INSTRUCTION = `Se o pedido exigir agir no computador, chame a ferramenta ${COMPUTER_TOOL_NAME} em vez de responder.`;
+/** Modelos sem ferramentas (nuvem, BitNet) pedem o controle com este marcador. */
+export const COMPUTER_MARKER = "[[CONTROLAR_PC]]";
+const MARKER_INSTRUCTION = `Se o pedido exigir agir no computador, responda somente ${COMPUTER_MARKER} e nada mais: o app assume o controle.`;
 
 /** Extrai o id do Ollama de `Ollama: <id>` (undefined para outros formatos). */
 export function ollamaModelId(model: string): string | undefined {
@@ -75,9 +94,15 @@ export function ollamaModelId(model: string): string | undefined {
  * Envia a conversa ao Ollama local pelo backend. Não há fallback para nuvem nem
  * resposta simulada: qualquer falha do Ollama é repassada ao chat.
  */
-export function systemPromptFor(effort?: EffortLevel, memory = ""): string {
+export function systemPromptFor(effort?: EffortLevel, memory = "", control: "tool" | "marker" | "none" = "none"): string {
   const instruction = effort ? EFFORT_INFO[effort].instruction : undefined;
-  return `${SYSTEM_PROMPT} ${APP_CAPABILITIES}${instruction ? ` ${instruction}` : ""}${memory}`;
+  const controlText = control === "tool" ? ` ${TOOL_INSTRUCTION}` : control === "marker" ? ` ${MARKER_INSTRUCTION}` : "";
+  return `${SYSTEM_PROMPT} ${APP_CAPABILITIES}${controlText}${instruction ? ` ${instruction}` : ""}${memory}`;
+}
+
+/** Marcador de controle no texto de modelos sem ferramentas. */
+export function hasComputerMarker(text: string): boolean {
+  return text.includes(COMPUTER_MARKER) || text.includes("CONTROLAR_PC");
 }
 
 const qaCancelled = new Set<string>();
@@ -128,11 +153,14 @@ export async function askAI(model: string, messages: AIMessage[], options: AskOp
     const result = await invoke<OllamaChatResult>("ollama_chat", {
       requestId,
       model: modelId,
-      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory) }, ...messages],
+      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "tool" : "none") }, ...messages],
       think: effort?.think ?? options.think ?? false,
       thinkLevel: effort?.think ? effort.thinkLevel : undefined,
+      options: options.allowComputerControl ? { tools: [COMPUTER_TOOL] } : undefined,
     });
+    const wantsComputer = Boolean(result.toolCalls?.some((call) => call.function?.name === COMPUTER_TOOL_NAME)) || hasComputerMarker(result.content);
     return {
+      wantsComputer,
       text: result.content.trim(),
       thinking: result.thinking.trim() || undefined,
       source: `Ollama (${result.model})`,
@@ -156,9 +184,9 @@ async function askBitnet(messages: AIMessage[], requestId: string, options: AskO
   try {
     const result = await invoke<OllamaChatResult>("bitnet_chat", {
       requestId,
-      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory) }, ...messages],
+      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "marker" : "none") }, ...messages],
     });
-    return { text: result.content.trim(), source: "BitNet (bitnet.cpp)", tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
+    return { wantsComputer: options.allowComputerControl && hasComputerMarker(result.content), text: result.content.trim(), source: "BitNet (bitnet.cpp)", tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
   } catch (error) {
     throw error instanceof Error ? error : new Error(String(error));
   } finally {
@@ -176,9 +204,9 @@ async function askCloud(providerId: string, model: string, messages: AIMessage[]
   try {
     const result = await invoke<OllamaChatResult>("cloud_chat", {
       requestId, providerId, model, baseUrl,
-      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory) }, ...messages],
+      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "marker" : "none") }, ...messages],
     });
-    return { text: result.content.trim(), source: cloudDisplayName(`Nuvem: ${providerId}/${model}`) ?? providerId, tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
+    return { wantsComputer: options.allowComputerControl && hasComputerMarker(result.content), text: result.content.trim(), source: cloudDisplayName(`Nuvem: ${providerId}/${model}`) ?? providerId, tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
   } catch (error) {
     throw error instanceof Error ? error : new Error(String(error));
   } finally {

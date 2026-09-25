@@ -1,7 +1,8 @@
 /**
  * Memória do usuário: o que ele contou em Configurações › Memória (nome, estilo) e o que a IA
  * aprendeu nas conversas ("não use emojis", "me chame de Dé"). Vira um bloco no prompt de sistema
- * de TODAS as conversas: chat comum, agente "Controlar o PC" e modelos em nuvem.
+ * de TODAS as conversas: chat comum, agente que controla o PC e modelos em nuvem. Fica salva em
+ * `memoria-da-ia.md` (ver `serializeMemoryFile`/`parseMemoryFile` e `store/memoryFile.ts`).
  *
  * A detecção é por frases (sem modelo), então não gasta tokens e funciona offline.
  */
@@ -124,6 +125,65 @@ export function memoryPrompt(memory: UserMemory | undefined): string {
   for (const fact of memory.facts) lines.push(`- ${fact.text}`);
   if (!lines.length) return "";
   return `\n\n## Memória sobre o usuário\nPreferências salvas pelo usuário. Siga-as em todas as respostas sem comentar que são uma memória. Elas não mudam a tarefa: continue respondendo exatamente ao que foi pedido.\n${lines.join("\n")}`;
+}
+
+const FILE_HEADER = `# Memória da IA — Open Assistant
+
+Este arquivo é a memória do assistente: como ele deve agir e falar com você. O app lê este arquivo ao abrir
+(e quando você volta para a janela) e grava aqui o que aprender nas conversas. Pode editar à vontade.
+`;
+const MANUAL_MARK = " _(adicionado por você)_";
+
+/** Memória → Markdown legível (`memoria-da-ia.md`). */
+export function serializeMemoryFile(memory: UserMemory): string {
+  const styles = STYLE_OPTIONS.map((style) => `- [${memory.styles.includes(style.id) ? "x" : " "}] ${style.label}`).join("\n");
+  const facts = memory.facts.length ? memory.facts.map((fact) => `- ${fact.text}${fact.source === "manual" ? MANUAL_MARK : ""}`).join("\n") : "- (nada ainda)";
+  return `${FILE_HEADER}
+## Como me chamar
+- Nome: ${memory.name}
+- Apelido: ${memory.callMe}
+
+## Jeito de conversar
+${styles}
+
+## Instruções extras
+${memory.about.trim() || "(nenhuma)"}
+
+## Aprendido nas conversas
+${facts}
+
+## Aprender sozinho
+- ${memory.learn ? "sim" : "não"}
+`;
+}
+
+/** Markdown → memória. Tolera edições à mão (linhas a mais, seções faltando). */
+export function parseMemoryFile(text: string): UserMemory {
+  const sections = new Map<string, string[]>();
+  let current = "";
+  for (const line of text.replace(/\r/g, "").split("\n")) {
+    const heading = line.match(/^##\s+(.+?)\s*$/);
+    if (heading) { current = heading[1].toLocaleLowerCase("pt-BR"); sections.set(current, []); continue; }
+    if (current) sections.get(current)!.push(line);
+  }
+  const section = (name: string) => sections.get(name) ?? [];
+  const bullets = (name: string) => section(name).map((line) => line.match(/^\s*[-*]\s+(.*)$/)?.[1]?.trim()).filter((item): item is string => Boolean(item));
+  const field = (label: string) => bullets("como me chamar").find((item) => item.toLocaleLowerCase("pt-BR").startsWith(`${label}:`))?.slice(label.length + 1).trim() ?? "";
+  const checked = new Set(bullets("jeito de conversar").filter((item) => /^\[[xX]\]/.test(item)).map((item) => item.replace(/^\[[xX]\]\s*/, "").toLocaleLowerCase("pt-BR")));
+  const about = section("instruções extras").join("\n").trim();
+  const facts = bullets("aprendido nas conversas").filter((item) => item !== "(nada ainda)").map((item, index) => {
+    const manual = item.endsWith(MANUAL_MARK.trim());
+    return { id: `file-${index}-${item.length}`, text: manual ? item.slice(0, -MANUAL_MARK.trim().length).trim() : item, source: manual ? "manual" as const : "auto" as const, createdAt: 0 };
+  });
+  const learn = bullets("aprender sozinho")[0]?.toLocaleLowerCase("pt-BR");
+  return {
+    name: field("nome"),
+    callMe: field("apelido"),
+    styles: STYLE_OPTIONS.filter((style) => checked.has(style.label.toLocaleLowerCase("pt-BR"))).map((style) => style.id),
+    about: about === "(nenhuma)" ? "" : about,
+    facts,
+    learn: learn ? !learn.startsWith("n") : true,
+  };
 }
 
 /** Restaura a memória salva ignorando campos quebrados. */

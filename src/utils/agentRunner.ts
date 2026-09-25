@@ -1,5 +1,5 @@
 /**
- * Loop do agente que controla o PC (modo "Controlar o PC" do chat).
+ * Loop do agente que controla o PC (acionado sozinho pelo chat quando o pedido exige agir no computador).
  *
  * 1. Caminho rápido: se a frase bate com um alias do catálogo (`agent_route`) ou com a camada
  *    semântica (`agent_semantic`, n-gramas na CPU), executa o intent sem chamar o modelo —
@@ -14,6 +14,9 @@ import { EFFORT_INFO, type EffortLevel } from "./effort";
 import { ollamaModelId } from "./aiService";
 import { BITNET_MODEL_PREFIX } from "./localCatalog";
 import type { ActionCandidate } from "../store/store";
+
+/** Skill principal do agente (o SKILL.md dela já está no prompt de `agent_prepare`). */
+const SKILL_NAME = "controle-do-windows";
 
 export type AccessMode = "Perguntar" | "Automático" | "Somente leitura";
 export type StepStatus = "running" | "waiting" | "ok" | "error" | "denied" | "cancelled";
@@ -266,8 +269,12 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentResult> {
       if (tools.length <= 1) throw new Error(`O conector @${options.mcpServer} não está rodando ou não tem ferramentas. Ligue-o em Configurações › Conectores MCP.`);
       focus = `\n\n## Pedido com @${options.mcpServer}\nO usuário escolheu o conector ${options.mcpServer}: resolva usando as ferramentas ${prefix}*.`;
       hint = `\n\n(Use o conector @${options.mcpServer}: chame uma das ferramentas ${prefix}* antes de responder.)`;
-    } else if (options.skill) {
+    } else if (options.skill === SKILL_NAME) {
       focus = `\n\n## Pedido com /${options.skill}\nO usuário invocou esta skill: siga o SKILL.md acima à risca.`;
+    } else if (options.skill) {
+      // Outra skill ("/abrir-programas"): o texto dela entra no prompt só nesta tarefa.
+      const skillText = await invoke<string>("read_skill", { name: options.skill }).catch(() => "");
+      focus = `\n\n## Skill /${options.skill} (pedida pelo usuário — siga à risca)\n${skillText}`;
     }
     let messages: AgentMessage[] = [
       { role: "system", content: `${setup.systemPrompt}${focus}${options.memory ?? ""}` },

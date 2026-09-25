@@ -1,6 +1,6 @@
-import { ArrowUp, AtSign, AudioLines, Ban, Bot, Brain, Check, ChevronRight, KeyRound, Cloud, CircleAlert, CircleCheck, CircleX, Copy, Cpu, Download, FileText, Folder, Image, LoaderCircle, Mic, MousePointer2, Play, Plus, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
+import { ArrowUp, AtSign, AudioLines, Ban, Bot, Brain, Check, ChevronRight, KeyRound, Cloud, CircleAlert, CircleCheck, CircleX, Copy, Cpu, Download, FileText, Folder, Image, LoaderCircle, Mic, Play, Plus, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useStore, type ActionCandidate, type ChatMessage, type Invocation } from "../store/store";
+import { useStore, type ActionCandidate, type Invocation } from "../store/store";
 import { refreshInstalledModels, scanHardware, startOllama, useLocalModels } from "../store/localModelsStore";
 import { SpeechController, transcribe } from "../utils/SpeechController";
 import { refreshTools, useTools } from "../store/toolsStore";
@@ -11,10 +11,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { allCloudProviders, CLOUD_PRODUCT_NAMES, cloudModelValue, providerModels } from "../utils/cloudModels";
 import { applyDetected, detectMemory, memoryPrompt } from "../utils/memory";
 import { looksLikePcAction } from "../utils/pcIntent";
+import { parseCalculation } from "../utils/calc";
+import { CalculatorCard } from "./CalculatorCard";
 import { findMention } from "../utils/composerMentions";
 import type { ProviderConfig } from "../utils/providers";
 import { cleanModelTitle, titlePrompt } from "../utils/chatTitle";
-import { askAI, cancelAI, NO_LOCAL_MODEL_ERROR, ollamaModelId } from "../utils/aiService";
+import { askAI, cancelAI, COMPUTER_MARKER, NO_LOCAL_MODEL_ERROR, ollamaModelId } from "../utils/aiService";
 import { AssistantFace } from "./AssistantFace";
 import { EffortControl } from "./EffortControl";
 import type { SpeechPulse } from "./RobotFace";
@@ -115,7 +117,11 @@ async function readAttachments(files: File[]): Promise<{ images: string[]; text:
   return { images, text: parts.join("\n\n") };
 }
 
-/** Tela de chat: mensagens, compositor (anexos, modelo, esforço, acesso), voz local e modo agente "Controlar o PC". */
+/**
+ * Tela de chat: mensagens, compositor (anexos, modelo, esforço, acesso), voz local e controle do PC automático.
+ * Ordem de cada envio: calculadora → "/"/"@" → ação rápida do catálogo → ação clara no PC (agente) → modelo,
+ * que pode pedir o controle do PC pela ferramenta `controlar_computador`.
+ */
 export function ChatView() {
   const { state, dispatch } = useStore();
   const local = useLocalModels();
@@ -192,8 +198,9 @@ export function ChatView() {
     if (list && followLatest.current) list.scrollTop = list.scrollHeight;
   }, [chat.messages]);
 
-  // Com "Controlar o PC" ligado, os conectores MCP já sobem antes da primeira tarefa.
-  useEffect(() => { if (state.agentMode && !isQAOffline()) warmAgent(); }, [state.agentMode]);
+  // O agente (skill + conectores MCP) sobe em segundo plano logo que o chat abre: quando a IA decidir
+  // controlar o PC, não precisa esperar os conectores.
+  useEffect(() => { if (isQAOffline()) return; const timer = setTimeout(warmAgent, 4000); return () => clearTimeout(timer); }, []);
 
   useEffect(() => {
     followLatest.current = true;
@@ -336,6 +343,15 @@ export function ChatView() {
     setActivePopover(null);
   }
 
+  /** O agente usa o Ollama (ferramentas); com modelo em nuvem/BitNet no chat, usa o modelo local preferido. */
+  function agentModelFor(model: string | undefined): string {
+    if (model && ollamaModelId(model)) return model;
+    const preferred = state.preferredModel && ollamaModelId(state.preferredModel) ? state.preferredModel : undefined;
+    const installed = preferred ?? (installedIds[0] ? `${OLLAMA_MODEL_PREFIX}${installedIds[0]}` : undefined);
+    if (!installed) throw new Error("Para controlar o PC, baixe um modelo local com ferramentas (ex.: qwen3.5:9b) em Configurações › Modelos locais.");
+    return installed;
+  }
+
   /** Roda o agente e grava passos/resposta na mensagem do assistente. */
   async function agentTurn(params: { chatId: string; assistantMsgId: string; requestId: string; model: string; history: { role: "user" | "assistant"; content: string }[]; userText: string; images?: string[]; memory: string; invocations?: Invocation[] }): Promise<AgentResult> {
     agentCancel.current = false;
@@ -370,33 +386,6 @@ export function ChatView() {
     });
     dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: result.text, steps: result.steps, loading: false, source: result.source } });
     return result;
-  }
-
-  /** Botões da oferta "Ligar Controlar o PC": executa na mesma mensagem, sem repetir a pergunta. */
-  async function answerOffer(message: ChatMessage, choice: { candidate?: ActionCandidate; enableAgent?: boolean; dismiss?: boolean }) {
-    if (!message.offer || generating) return;
-    const chatId = chat.id;
-    const offer = { ...message.offer, resolved: true };
-    if (choice.dismiss) { dispatch({ type: "updateMessage", chatId, messageId: message.id, patch: { offer } }); return; }
-    if (choice.enableAgent) dispatch({ type: "setAgentMode", on: true });
-    const requestId = crypto.randomUUID();
-    const model = resolveChatModel(chat.model, installedIds, state.preferredModel);
-    dispatch({ type: "updateMessage", chatId, messageId: message.id, patch: { offer, loading: true, text: "", startedAt: Date.now(), steps: undefined } });
-    setPendingRequest({ requestId, chatId, assistantId: message.id });
-    try {
-      if (choice.candidate) await catalogTurn(chatId, message.id, choice.candidate);
-      else {
-        if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
-        const index = chat.messages.findIndex((item) => item.id === message.id);
-        const history = chat.messages.slice(0, Math.max(0, index - 1)).filter((item) => !item.loading && !item.error && (item.sender === "user" || item.sender === "assistant")).map((item) => ({ role: item.sender as "user" | "assistant", content: item.text }));
-        await agentTurn({ chatId, assistantMsgId: message.id, requestId, model, history, userText: message.offer.request, memory: memoryPrompt(state.memory) });
-      }
-    } catch (error) {
-      dispatch({ type: "updateMessage", chatId, messageId: message.id, patch: { text: error instanceof Error ? error.message : String(error), loading: false, error: true } });
-    } finally {
-      setPendingRequest(undefined);
-      setConfirmRequest(undefined);
-    }
   }
 
   async function send(options: { text?: string; speakAfter?: boolean } = {}) {
@@ -446,55 +435,59 @@ export function ChatView() {
     let thinking = "";
     let thinkingTokens = 0;
     let thinkingMs: number | undefined;
+    const agentHistory = () => history.slice(0, -1).filter((item) => item.role === "user" || item.role === "assistant").map((item) => ({ role: item.role as "user" | "assistant", content: item.content }));
+    const finish = (replyText: string) => {
+      if (options.speakAfter && replyText) startSpeaking(replyText);
+      else setOrbitalState(nextOrbitalState("reset"));
+    };
+    /** Controle do PC: o agente executa ferramentas e mostra cada passo na mesma mensagem. */
+    const controlComputer = async () => {
+      const agentModel = agentModelFor(model);
+      dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: "", thinking: undefined, loading: true, model: agentModel } });
+      const result = await agentTurn({ chatId, assistantMsgId, requestId, model: agentModel, memory: memoryBlock, invocations: sentInvocations, history: agentHistory(), userText: attached.text ? `${sourceText}\n\n${attached.text}` : sourceText, images: attached.images });
+      if (isFirstQuestion && sourceText) refineTitle(chatId, agentModel, sourceText);
+      finish(result.text);
+    };
     try {
-      const forceAgent = sentInvocations.length > 0;
-      if ((state.agentMode || forceAgent) && !isQAOffline()) {
-        // Modo "Controlar o PC" (ou "/skill", "@conector"): o agente executa ferramentas e mostra cada passo.
-        if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
-        const result = await agentTurn({
-          chatId, assistantMsgId, requestId, model, memory: memoryBlock, invocations: sentInvocations,
-          history: history.slice(0, -1).filter((item) => item.role === "user" || item.role === "assistant").map((item) => ({ role: item.role as "user" | "assistant", content: item.content })),
-          userText: attached.text ? `${sourceText}\n\n${attached.text}` : sourceText,
-          images: attached.images,
-        });
-        if (isFirstQuestion && sourceText) refineTitle(chatId, model, sourceText);
-        if (options.speakAfter && result.text) startSpeaking(result.text);
-        else setOrbitalState(nextOrbitalState("reset"));
+      const plainText = sourceText && !attached.images.length && !attached.text && !sentInvocations.length;
+      // 1. Conta básica: calculadora do app, zero tokens.
+      const calculation = plainText ? parseCalculation(sourceText) : undefined;
+      if (calculation) {
+        dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: `${calculation.expression} = ${calculation.result}`, calc: { expression: calculation.expression, result: calculation.result }, loading: false, source: "Calculadora" } });
+        finish(`${calculation.expression} = ${calculation.result}`);
         return;
       }
-      if (sourceText && !attached.images.length && !attached.text && !isQAOffline()) {
-        // "Controlar o PC" desligado: pedidos conhecidos ("abre o powershell") rodam direto pelo catálogo,
-        // sem gastar tokens; outras ações no PC ganham o botão "Ligar Controlar o PC e executar".
-        const match = await matchAction(sourceText);
-        const action = looksLikePcAction(sourceText);
-        if (match.kind === "run") {
-          const result = await catalogTurn(chatId, assistantMsgId, match.candidate);
-          if (options.speakAfter && result.text) startSpeaking(result.text); else setOrbitalState(nextOrbitalState("reset"));
-          return;
-        }
-        if (action) {
-          const candidates = match.kind === "suggest" ? match.candidates : undefined;
-          const offerText = candidates
-            ? "Não tenho certeza do que você quer abrir. Escolha uma opção ou ligue **Controlar o PC** para eu resolver sozinho:"
-            : "Isso é uma ação no computador. Para eu executar, ligue **Controlar o PC** (na barra de mensagem) — ou clique abaixo:";
-          dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: offerText, loading: false, source: "Open Assistant", offer: { request: sourceText, candidates } } });
-          setOrbitalState(nextOrbitalState("reset"));
-          return;
+      if (!isQAOffline()) {
+        // 2. "/skill" ou "@conector": direto para o agente.
+        if (sentInvocations.length) { await controlComputer(); return; }
+        if (plainText) {
+          // 3. Pedido conhecido ("abre o powershell"): catálogo, sem modelo.
+          const match = await matchAction(sourceText);
+          if (match.kind === "run") {
+            const result = await catalogTurn(chatId, assistantMsgId, match.candidate);
+            finish(result.text);
+            return;
+          }
+          // 4. Pedido claro de ação no PC ("abre o chrome e entra no youtube"): o agente assume sozinho.
+          if (looksLikePcAction(sourceText) || match.kind === "suggest") { await controlComputer(); return; }
         }
       }
       if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
+      // 5. Conversa normal; se o modelo decidir que precisa agir no PC, ele pede e o agente assume.
       const reply = await askAI(model, history, {
         requestId,
         memory: memoryBlock,
         effort: state.effort,
+        allowComputerControl: !isQAOffline(),
         onDelta: (delta) => {
-          content += delta.content;
+          content += delta.content.replace(COMPUTER_MARKER, "");
           thinking += delta.thinking;
           thinkingTokens += delta.thinkingTokens ?? estimateTokens(delta.thinking);
           if (content && thinkingMs === undefined) thinkingMs = Date.now() - startedAt;
           dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: content, thinking: thinking || undefined, thinkingTokens: thinkingTokens || undefined, thinkingMs, loading: !content } });
         },
       });
+      if (reply.wantsComputer && !reply.cancelled) { await controlComputer(); return; }
       const tokensPerSecond = isQAOffline() ? 28 : reply.tokensPerSecond;
       if (tokensPerSecond) setLastGeneration({ chatId, model, tokensPerSecond });
       const fallbackText = reply.cancelled ? "Resposta interrompida." : "O modelo não retornou texto.";
@@ -766,12 +759,8 @@ export function ChatView() {
             ? <ThinkingIndicator messageId={message.id} startedAt={message.startedAt} tokens={message.thinkingTokens} preview={message.thinking} />
             : message.error
               ? <div className="message-error"><p>{message.text}</p><div>{local.ollama === "offline" && <button onClick={() => startOllama()}><Play size={12} />Iniciar Ollama</button>}<button onClick={() => openModelSettings()}><Bot size={12} />Modelos locais</button></div></div>
-              : <>{message.thinking && <details className="message-thinking"><summary>{thinkingSummary(message.thinkingMs, message.thinkingTokens)}</summary><p>{message.thinking}</p></details>}<div className={`msg-content ${streaming ? "streaming" : ""}`}>{renderContent(message.text)}</div>
-                {message.offer && !message.offer.resolved && <div className="action-offer">
-                  {message.offer.candidates?.map((candidate) => <button key={`${candidate.id}-${JSON.stringify(candidate.slots)}`} className="flat-button" disabled={generating} onClick={() => void answerOffer(message, { candidate })}><Play size={12} />{candidate.label}</button>)}
-                  <button className="primary-button" disabled={generating} onClick={() => void answerOffer(message, { enableAgent: true })}><MousePointer2 size={13} />Ligar Controlar o PC e executar</button>
-                  <button className="flat-button" onClick={() => void answerOffer(message, { dismiss: true })}>Agora não</button>
-                </div>}</>}
+              : <>{message.thinking && <details className="message-thinking"><summary>{thinkingSummary(message.thinkingMs, message.thinkingTokens)}</summary><p>{message.thinking}</p></details>}{message.calc ? <CalculatorCard expression={message.calc.expression} result={message.calc.result} /> : <div className={`msg-content ${streaming ? "streaming" : ""}`}>{renderContent(message.text)}</div>}
+</>}
           {message.memoryNote && message.memoryNote.length > 0 && <button className="memory-note" onClick={() => dispatch({ type: "settings", open: true, tab: "memory" })} title={`Aprendi: ${message.memoryNote.join(" · ")} — clique para ver ou apagar`}><Brain size={12} />Memória atualizada</button>}
           {!message.loading && !streaming && <footer className="msg-footer">
             <span className="msg-meta">{replyFooter(message.model, message.source, message.tokens, message.tokensPerSecond)}{interrupted && <span className="msg-tag">interrompida</span>}</span>
@@ -812,7 +801,7 @@ export function ChatView() {
         </div>}
         {invocations.length > 0 && <div className="attachment-chips invocation-chips">{invocations.map((item) => <span key={`${item.kind}-${item.id}`} className={`invocation-chip ${item.kind}`} title={item.kind === "skill" ? "Esta mensagem usa a skill (liga o agente só para ela)" : "Esta mensagem usa só as ferramentas deste conector"}>{item.kind === "skill" ? <Sparkles size={12} /> : <AtSign size={12} />}{item.label.replace(/^[/@]/, "")}<button aria-label={`Remover ${item.label}`} onClick={() => setInvocations((items) => items.filter((current) => current !== item))}><X size={11} /></button></span>)}</div>}
         {attachments.length > 0 && <div className="attachment-chips">{attachments.map((file) => <span key={`${file.name}-${file.size}`}><FileText size={12} />{file.name}<button onClick={() => setAttachments((items) => items.filter((item) => item !== file))}><X size={11} /></button></span>)}</div>}
-        <textarea ref={textareaRef} value={draft} onChange={(event) => updateDraft(event.target.value, event.target.selectionStart ?? event.target.value.length)} onKeyDown={onComposerKeyDown} onBlur={() => setMention(undefined)} placeholder={listening ? "Ouvindo… (clique no quadrado para enviar)" : transcribing ? "Transcrevendo…" : invocations.length ? "Descreva o que fazer com a skill/conector escolhido" : state.agentMode ? "Peça uma ação no PC — ex.: abre o chrome e entra no g1" : chatModel ? `Pergunte ao ${ollamaModelId(chatModel) ?? modelDisplayName(chatModel)} · / skills · @ conectores` : "Pergunte qualquer coisa · / skills · @ conectores"} rows={1} />
+        <textarea ref={textareaRef} value={draft} onChange={(event) => updateDraft(event.target.value, event.target.selectionStart ?? event.target.value.length)} onKeyDown={onComposerKeyDown} onBlur={() => setMention(undefined)} placeholder={listening ? "Ouvindo… (clique no quadrado para enviar)" : transcribing ? "Transcrevendo…" : invocations.length ? "Descreva o que fazer com a skill/conector escolhido" : "Pergunte ou peça algo no PC — ex.: abre o chrome e entra no youtube · / skills · @ conectores"} rows={1} />
         <div className="composer-toolbar apple-composer-toolbar">
           <div className="composer-left-actions">
             <button className={`composer-plus ${quickMenuOpen ? "active" : ""}`} title="Mais opções" aria-label="Mais opções" aria-expanded={quickMenuOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "quick")); setModelMenuOpen(false); }}><Plus size={17} /></button>
@@ -842,7 +831,6 @@ export function ChatView() {
               <button onClick={chooseFiles}><span><FileText size={14} />Anexar documento</span></button>
               <button onClick={chooseFiles}><span><Image size={14} />Anexar foto</span></button>
             </div>}
-            <button className={`agent-toggle ${state.agentMode ? "active" : ""}`} aria-pressed={state.agentMode} title={state.agentMode ? "Controlando o PC: o assistente pode abrir apps, clicar e digitar (com a permissão escolhida em + › Acesso ao computador)" : "Deixar o assistente controlar o PC"} onClick={() => dispatch({ type: "setAgentMode", on: !state.agentMode })}><MousePointer2 size={14} /><span>Controlar o PC</span></button>
             <button className={`project-context ${projectOpen ? "active" : ""}`} title="Projeto de contexto" aria-expanded={projectOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "project")); setModelMenuOpen(false); }}><Folder size={14} /><span>{contextProject}</span></button>
             {projectOpen && <div className="composer-popover project-popover">
               <input autoFocus value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Buscar projetos" aria-label="Buscar projetos" />
