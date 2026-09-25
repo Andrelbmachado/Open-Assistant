@@ -55,6 +55,42 @@
 - [x] Botão de trocar tipo de área sem a caixa larga atrás
 - [x] Conversas nomeadas pela 1ª pergunta (refinado pelo modelo local); conversa vazia abandonada é apagada
 
+## 8. PRÓXIMA SESSÃO — pedidos do usuário (2026-09-25, ainda não feitos)
+Ordem sugerida: 8.1 → 8.2 → 8.3 → 8.4 → 8.5 → 8.6 → 8.7.
+
+- [ ] **8.1 App diz que "não consegue abrir o PowerShell"** (bug relatado com print da resposta).
+  Causa provável (não verificada): o botão **Controlar o PC** estava desligado; aí a mensagem vai para o chat
+  comum (`askAI`), cujo prompt (`aiService.ts::SYSTEM_PROMPT`) não fala de ferramentas, e o modelo responde que é só texto.
+  Fazer: (a) confirmar reproduzindo com o botão desligado/ligado; (b) rodar o roteador de intents (`agent_route`)
+  também no chat comum — se a frase bate com um intent ("abre o powershell"), executar direto (respeitando o slider de
+  acesso) ou sugerir ligar o modo; (c) quando o pedido parecer ação no PC e o modo estiver desligado, responder com um
+  botão "Ligar Controlar o PC e executar"; (d) ajustar o SYSTEM_PROMPT do chat comum para não afirmar que não tem
+  ferramentas e explicar o botão; (e) garantir alias "abre o powershell"/"abre o terminal" → `open_app` wt/powershell.
+- [ ] **8.2 Botão Copiar com confirmação**: ao copiar (resposta da IA e mensagem do usuário) o ícone vira ✓ por 3 s
+  e volta a ser Copiar. Hoje só há Copiar nas respostas (`ChatView.tsx`, `.msg-tools`) e no bloco de código; adicionar
+  também nas mensagens do usuário. Estado por mensagem (id copiado + timeout 3000 ms).
+- [ ] **8.3 Memória da IA** (ex.: "não use emojis" deve valer nas próximas conversas).
+  Detectar pedidos de preferência ("não use…", "sempre…", "me chame de…", "lembre que…") e salvar como fatos curtos;
+  injetar no prompt de sistema de TODAS as conversas (chat comum, agente e nuvem). Guardar no store (localStorage) ou
+  em `skills/controle-do-windows/memoria/usuario.md` (já existe; hoje só o agente lê). Mostrar "Memória atualizada"
+  discreto na resposta. Permitir apagar itens.
+- [ ] **8.4 Configurações › Memória** (memórias básicas): nome/como quer ser chamado, estilo de conversa (formal,
+  direto, sem emojis…), idioma, fatos livres; lista das memórias aprendidas (8.3) com editar/apagar. Tudo entra no
+  prompt de sistema automaticamente (`systemPromptFor` em aiService.ts + `agent_prepare` em agent.rs + cloud).
+- [ ] **8.5 Embeddings para pedidos comuns** (abrir programas e sites sem gastar tokens do modelo).
+  Hoje o roteador (`agent.rs::route`) só casa alias exato. Adicionar camada semântica na CPU (desenho do pacote
+  local-pc-agent: embed ≥ 0,82 executa; 0,65–0,82 o modelo escolhe entre 3; < 0,65 conversa). Opções: modelo de
+  embedding do Ollama (`nomic-embed-text`/`bge-m3`, via Rust) ou ONNX no sherpa/ort. Vetorizar só id + descrição +
+  aliases + exemplos do `intents.yaml` (cache em disco); incluir apps instalados (`Get-StartApps`) e sites comuns.
+- [ ] **8.6 "/" invoca skills e "@" invoca conectores MCP** no compositor: popover com autocomplete ao digitar `/`
+  (skills: controle-do-windows e futuras) e `@` (conectores MCP ligados + apps). Item escolhido vira "chip" na mensagem
+  e força o uso: `/skill` → carrega a skill no prompt e liga o modo agente para aquela mensagem; `@mcp` → expõe só as
+  ferramentas daquele conector. Navegação por teclado (↑↓ Enter Esc).
+- [ ] **8.7 Indicador de conexão no ícone de computador** (rodapé da barra lateral, ao lado do perfil): linha fina
+  com ponto verde abaixo do ícone quando a IA local está OK (Ollama online e modelo escolhido instalado — usar
+  `useLocalModels().ollama === "online"`); cinza/vermelho quando offline, com tooltip explicando. Para modelo em nuvem:
+  verde se há chave (`has_credential`).
+
 ## Resultados verificados (2026-09-25)
 - Agente com qwen3.5:9b: "abre o chrome, clica na URL, digita g1.globo.com, enter e diz a manchete" → 4 passos, 11 s, manchete correta.
 - Calculadora: abriu, clicou nos botões pelos elementos de UI Automation, visor confirmado "12 × 8 = 96".
