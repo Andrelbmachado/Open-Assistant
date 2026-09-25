@@ -10,13 +10,14 @@ import {
 } from "./orbitalState";
 
 describe("orbital state", () => {
-  it("uses blue tentacles as the persisted default skin", () => {
-    expect(DEFAULT_ORBITAL_SKIN).toBe("tentacles");
+  it("uses the robot face as the persisted default skin", () => {
+    expect(DEFAULT_ORBITAL_SKIN).toBe("robot");
     expect(isOrbitalSkin(DEFAULT_ORBITAL_SKIN)).toBe(true);
   });
 
   it("rejects an unknown restored skin", () => {
     expect(isOrbitalSkin("nebula")).toBe(false);
+    expect(isOrbitalSkin("super")).toBe(true);
   });
 
   it("maps the voice conversation lifecycle to visible states", () => {

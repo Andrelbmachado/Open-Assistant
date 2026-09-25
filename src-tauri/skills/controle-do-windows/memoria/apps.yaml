@@ -1,0 +1,40 @@
+# Nomes falados -> executável Windows
+chrome:
+  aliases: [chrome, google chrome, navegador]
+  exe: chrome.exe
+edge:
+  aliases: [edge, microsoft edge]
+  exe: msedge.exe
+firefox:
+  aliases: [firefox, mozilla]
+  exe: firefox.exe
+vscode:
+  aliases: [vscode, vs code, codigo, code]
+  exe: code
+cursor:
+  aliases: [cursor]
+  exe: cursor
+discord:
+  aliases: [discord]
+  exe: discord
+spotify:
+  aliases: [spotify]
+  exe: spotify
+steam:
+  aliases: [steam]
+  exe: steam
+whatsapp:
+  aliases: [whatsapp]
+  exe: whatsapp
+notepad:
+  aliases: [bloco de notas, notepad]
+  exe: notepad
+calc:
+  aliases: [calculadora, calc]
+  exe: calc
+terminal:
+  aliases: [terminal, powershell, wt]
+  exe: wt
+explorer:
+  aliases: [explorer, arquivos, pasta]
+  exe: explorer

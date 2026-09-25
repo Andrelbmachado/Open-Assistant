@@ -1,16 +1,22 @@
-import { Bot, ChevronDown, Folder, MessageSquare, MessageSquarePlus, Plus, Search, Settings, ShoppingBag, SquarePen, TerminalSquare } from "lucide-react";
+import { Bot, ChevronDown, Cloud, Folder, MessageSquare, Monitor, Plus, Search, Settings, ShoppingBag, SquarePen, TerminalSquare } from "lucide-react";
 import { useState } from "react";
 import { useStore, type ViewKind } from "../store/store";
+import { isLocalChatModel } from "../utils/localCatalog";
 
-const sections: { id?: ViewKind; title: string; icon: typeof MessageSquarePlus; action: "chat" | "project" | "view" }[] = [
-  { title: "Novo Chat", icon: MessageSquarePlus, action: "chat" },
+/** Atalhos fixos do topo da barra lateral. `chat` cria uma conversa; `view` troca a área ativa. */
+const sections: { id?: ViewKind; title: string; icon: typeof SquarePen; action: "chat" | "project" | "view" }[] = [
+  { title: "Novo Chat", icon: SquarePen, action: "chat" },
   { id: "agents", title: "Agentes", icon: Bot, action: "view" },
   { id: "terminal", title: "Terminal", icon: TerminalSquare, action: "view" },
   { id: "marketplace", title: "Marketplace", icon: ShoppingBag, action: "view" },
 ];
 
+/** Barra lateral: navegação, projetos, conversas recentes e o menu do usuário (Configurações). */
 export function Sidebar() {
   const { state, dispatch } = useStore();
+  const activeModel = state.chats.find((chat) => chat.id === state.activeChatId)?.model || state.preferredModel;
+  // Sem modelo escolhido o app continua local: o chat nunca cai para a nuvem sozinho.
+  const runsLocally = !activeModel || isLocalChatModel(activeModel);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
   const [projectsOpen, setProjectsOpen] = useState(true);
@@ -52,7 +58,7 @@ export function Sidebar() {
       </div>
       <footer className="sidebar-footer">
         {userMenuOpen && <div className="user-menu"><button onClick={() => { dispatch({ type: "settings", open: true }); setUserMenuOpen(false); }}><Settings size={15} /><span>Configurações</span></button></div>}
-        <button className="user-row" onClick={() => setUserMenuOpen((open) => !open)} aria-expanded={userMenuOpen}><span className="avatar">AM</span><span><strong>André</strong><small>Workspace local</small></span><span className="online-dot" /></button>
+        <button className="user-row" onClick={() => setUserMenuOpen((open) => !open)} aria-expanded={userMenuOpen}><span className="avatar">AM</span><span className="user-name"><strong>André</strong><small>{runsLocally ? "Rodando neste computador" : "Rodando na nuvem"}</small></span><span className="runtime-location" title={runsLocally ? "IA local (este computador)" : "IA na nuvem"} aria-label={runsLocally ? "IA local" : "IA na nuvem"}>{runsLocally ? <Monitor size={15} /> : <Cloud size={15} />}</span></button>
       </footer>
     </aside>
   );

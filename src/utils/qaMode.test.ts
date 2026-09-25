@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOfflineQAReply } from "./qaMode";
+import { createOfflineQAReply, shouldSubscribeToLocalModelEvents } from "./qaMode";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -9,6 +9,11 @@ afterEach(() => {
 });
 
 describe("createOfflineQAReply", () => {
+  it("does not subscribe to Tauri runtime events in QA mode", () => {
+    expect(shouldSubscribeToLocalModelEvents(true)).toBe(false);
+    expect(shouldSubscribeToLocalModelEvents(false)).toBe(true);
+  });
+
   it("returns a code fixture for a code scenario without external services", () => {
     const reply = createOfflineQAReply("mostre um exemplo de código", "GPT-5");
 

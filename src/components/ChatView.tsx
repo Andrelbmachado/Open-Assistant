@@ -1,61 +1,145 @@
-import { ArrowUp, Atom, AudioLines, Bot, Check, ChevronDown, ChevronRight, CircleDot, Copy, FileText, Folder, Gauge, Image, Mic, Paperclip, RotateCcw, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, AudioLines, Ban, Bot, Check, ChevronRight, Copy, Cpu, Download, FileText, Folder, Image, Mic, Play, Plus, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../store/store";
-import { SpeechController } from "../utils/SpeechController";
-import { askAI, getOllamaModels } from "../utils/aiService";
-import { OrbitalCanvas } from "./OrbitalCanvas";
-import { VoiceActivityMonitor } from "../utils/VoiceActivityMonitor";
-import { activityLabel, nextOrbitalState, shouldProcessVoiceTranscript, type OrbitalSkin, type OrbitalState } from "../utils/orbitalState";
+import { refreshInstalledModels, scanHardware, startOllama, useLocalModels } from "../store/localModelsStore";
+import { SpeechController, transcribe } from "../utils/SpeechController";
+import { refreshTools, useTools } from "../store/toolsStore";
+import { resolveAsrModel, resolveTtsVoice } from "../utils/toolCatalog";
+import { VoiceCapture, type CaptureResult } from "../utils/voiceCapture";
+import { askAI, cancelAI, NO_LOCAL_MODEL_ERROR, ollamaModelId } from "../utils/aiService";
+import { AssistantFace } from "./AssistantFace";
+import { EffortControl } from "./EffortControl";
+import type { SpeechPulse } from "./RobotFace";
+import { ThinkingIndicator, thinkingSummary } from "./ThinkingIndicator";
+import { activityLabel, nextOrbitalState, type OrbitalState } from "../utils/orbitalState";
 import { isQAOffline } from "../utils/qaMode";
+import { getAIMeterSummary } from "../utils/aiMeter";
+import { getVisibleTokensPerSecond, nextComposerPopover, type ComposerPopover, type GenerationMetric } from "../utils/composerState";
+import { BITNET_MODEL, buildLocalModelOptions, formatBytes, OLLAMA_MODEL_PREFIX, resolveChatModel, type LocalModelOption } from "../utils/localCatalog";
+import { describePull } from "../utils/localOperation";
+import { headingText, tokenizeInline } from "../utils/inlineMarkdown";
+import { estimateTokens, modelDisplayName, replyFooter } from "../utils/messageMeta";
+import { detectSpeechExpression, type RobotExpression } from "../utils/robotExpression";
 
 const speech = new SpeechController();
 type ApprovalMode = "Perguntar" | "Automático" | "Somente leitura";
 
-const defaultModels = [
-  "GPT-5",
-  "Claude",
-  "Ollama (Local)",
-  "DeepSeek",
-  "Llama 3.2 (Local)",
-];
+/** Anexos enviados nesta sessão, por id da mensagem, para as perguntas seguintes ainda verem a imagem. */
+const sessionAttachments = new Map<string, { images: string[]; text: string }>();
+const TEXT_FILE = /\.(txt|md|json|jsonc|ya?ml|toml|ini|csv|log|xml|html?|css|scss|js|jsx|ts|tsx|mjs|cjs|py|rs|go|java|kt|cs|cpp|cc|c|h|hpp|rb|php|sh|ps1|bat|sql|swift|vue|svelte)$/i;
+const MAX_TEXT_FILE = 200_000;
+const FENCE = "```";
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""));
+    reader.onerror = () => reject(reader.error ?? new Error(`Não foi possível ler ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Imagens vão para modelos com visão; arquivos de texto (código, logs) entram no prompt. */
+async function readAttachments(files: File[]): Promise<{ images: string[]; text: string }> {
+  const images: string[] = [];
+  const parts: string[] = [];
+  for (const file of files) {
+    if (file.type.startsWith("image/")) images.push(await fileToBase64(file));
+    else if ((file.type.startsWith("text/") || TEXT_FILE.test(file.name)) && file.size <= MAX_TEXT_FILE) parts.push(`Arquivo anexado ${file.name}:\n${FENCE}\n${await file.text()}\n${FENCE}`);
+  }
+  return { images, text: parts.join("\n\n") };
+}
 
 export function ChatView() {
   const { state, dispatch } = useStore();
+  const local = useLocalModels();
+  const tools = useTools();
   const [draft, setDraft] = useState("");
   const [listening, setListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceError, setVoiceError] = useState("");
+  const [voiceNeedsSetup, setVoiceNeedsSetup] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [orbitalState, setOrbitalState] = useState<OrbitalState>("idle");
   const [audioLevel, setAudioLevel] = useState<number | undefined>();
   const [reducedMotion, setReducedMotion] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
-  const [attachmentOpen, setAttachmentOpen] = useState(false);
-  const [projectOpen, setProjectOpen] = useState(false);
+  const [activePopover, setActivePopover] = useState<ComposerPopover | null>(null);
   const [approvalOpen, setApprovalOpen] = useState(false);
-  const [contextOpen, setContextOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState("");
   const [contextProject, setContextProject] = useState("Open Assistant");
   const [approval, setApproval] = useState<ApprovalMode>("Perguntar");
-  const [effort, setEffort] = useState("Alto");
-  const [speed, setSpeed] = useState("Padrão");
-  const [modelList, setModelList] = useState<string[]>(defaultModels);
+  const [accessLevel, setAccessLevel] = useState(100);
+  const [expression, setExpression] = useState<RobotExpression>("idle");
+  const [stageVisible, setStageVisible] = useState(false);
+  const [lastGeneration, setLastGeneration] = useState<GenerationMetric>();
+  const [pendingRequest, setPendingRequest] = useState<{ requestId: string; chatId: string; assistantId: string }>();
+  const speechPulse = useRef<SpeechPulse>({ at: 0, supported: false });
   const fileInput = useRef<HTMLInputElement>(null);
-  const voiceMonitor = useRef(new VoiceActivityMonitor());
-  const voiceDraft = useRef("");
-  const voiceRecognitionFailed = useRef(false);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  // Segue a resposta em streaming, a menos que o usuário tenha rolado para ler algo acima.
+  const followLatest = useRef(true);
+  const capture = useRef(new VoiceCapture());
   const voiceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chat = state.chats.find((item) => item.id === state.activeChatId) ?? state.chats[0];
   const suggestions = useMemo(() => ["Criar um plano de implementação", "Revisar os arquivos do projeto", "Abrir um terminal PowerShell"], []);
+  const localOptions = buildLocalModelOptions(local.hardware, local.installed);
+  const installedIds = local.installed.map((model) => model.name);
+  const chatModel = resolveChatModel(chat.model, installedIds, state.preferredModel);
+  // Uma geração por vez: o Ollama processaria em fila e o botão Parar precisa de um alvo único.
+  const generating = Boolean(pendingRequest);
   const canSend = Boolean(draft.trim() || attachments.length);
+  const quickMenuOpen = activePopover === "quick";
+  const projectOpen = activePopover === "project";
+  const meterOpen = activePopover === "meter";
+  const lastTokensPerSecond = getVisibleTokensPerSecond(lastGeneration, chat.id, chatModel ?? chat.model);
+  const aiMeter = getAIMeterSummary(chatModel ?? "", lastTokensPerSecond, isQAOffline());
+  // O rosto do assistente só aparece enquanto a conversa por voz está ativa.
+  const voiceActive = voiceMode || listening || orbitalState === "speaking";
+  const filteredProjects = state.projects.filter((project) => project.name.toLocaleLowerCase().includes(projectSearch.trim().toLocaleLowerCase()));
 
   useEffect(() => {
-    getOllamaModels().then((models) => {
-      if (models.length > 0) {
-        setModelList((prev) => Array.from(new Set([...models.map((m) => `Ollama: ${m}`), ...prev])));
-      }
-    });
+    void refreshInstalledModels();
+    void scanHardware();
+    void refreshTools();
+    // Modelos baixados por fora (ex.: `ollama pull` no terminal) aparecem ao voltar para o app.
+    const onFocus = () => { void refreshInstalledModels(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, []);
+
+  useEffect(() => {
+    const list = messagesRef.current;
+    if (list && followLatest.current) list.scrollTop = list.scrollHeight;
+  }, [chat.messages]);
+
+  useEffect(() => {
+    followLatest.current = true;
+    const list = messagesRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [chat.id]);
+
+  useEffect(() => {
+    if (!activePopover) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (composerRef.current?.contains(event.target as Node)) return;
+      setActivePopover(null);
+      setModelMenuOpen(false);
+      setApprovalOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [activePopover]);
+
+  useEffect(() => {
+    if (voiceActive) { setStageVisible(true); return; }
+    // Mantém o rosto por um instante para mostrar a transição de "parando de falar".
+    const timer = setTimeout(() => setStageVisible(false), 1300);
+    return () => clearTimeout(timer);
+  }, [voiceActive]);
 
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
@@ -75,8 +159,7 @@ export function ChatView() {
   function stopVoiceSession() {
     if (voiceTimer.current) clearTimeout(voiceTimer.current);
     voiceTimer.current = null;
-    speech.stopListening();
-    voiceMonitor.current.stop();
+    capture.current.stop("stopped", false);
     setListening(false);
     setVoiceMode(false);
     setAudioLevel(undefined);
@@ -92,121 +175,246 @@ export function ChatView() {
   }
 
   function startSpeaking(text: string) {
+    setExpression(detectSpeechExpression(text));
+    speechPulse.current = { at: 0, supported: false };
     setOrbitalState(nextOrbitalState("speech-start"));
     if (isQAOffline()) {
       if (voiceTimer.current) clearTimeout(voiceTimer.current);
       voiceTimer.current = setTimeout(() => {
         setVoiceMode(false);
+        setExpression("stopping");
         setOrbitalState(nextOrbitalState("speech-end"));
       }, Math.min(3200, Math.max(900, text.length * 18)));
       return;
     }
     speech.speak(text, {
+      voiceId: resolveTtsVoice(state.voice.ttsVoice, tools.installed),
+      onLevel: (level) => setAudioLevel(level || undefined),
       onStart: () => setOrbitalState(nextOrbitalState("speech-start")),
-      onBoundary: () => setAudioLevel(undefined),
-      onEnd: () => { setVoiceMode(false); setAudioLevel(undefined); setOrbitalState(nextOrbitalState("speech-end")); },
+      onBoundary: () => { speechPulse.current = { at: performance.now(), supported: true }; },
+      onEnd: () => { setVoiceMode(false); setAudioLevel(undefined); setExpression("stopping"); setOrbitalState(nextOrbitalState("speech-end")); },
       onError: resetOrbitalAfterError,
     });
   }
 
+  function openVoiceSettings() {
+    dispatch({ type: "settings", open: true, tab: "voice" });
+    setVoiceError("");
+    setVoiceNeedsSetup(false);
+  }
+
+  function openToolsSettings(focusModel?: string) {
+    dispatch({ type: "settings", open: true, tab: "tools", focusModel });
+    setActivePopover(null);
+    setModelMenuOpen(false);
+  }
+
+  function selectBitnet() {
+    dispatch({ type: "setModel", chatId: chat.id, model: BITNET_MODEL });
+    setModelMenuOpen(false);
+    setActivePopover(null);
+  }
+
+  function openModelSettings(focusModel?: string) {
+    dispatch({ type: "settings", open: true, tab: "models", focusModel });
+    setActivePopover(null);
+    setModelMenuOpen(false);
+  }
+
+  function selectModel(option: LocalModelOption) {
+    dispatch({ type: "setModel", chatId: chat.id, model: `${OLLAMA_MODEL_PREFIX}${option.id}` });
+    setModelMenuOpen(false);
+    setActivePopover(null);
+  }
+
   async function send(options: { text?: string; speakAfter?: boolean } = {}) {
+    if (generating) return;
     const sourceText = options.text ?? draft.trim();
     if (!sourceText && !attachments.length) return;
-    const attachmentText = attachments.length ? `[Anexos: ${attachments.map((file) => file.name).join(", ")}]` : "";
+    const sentFiles = attachments;
+    const attachmentText = sentFiles.length ? `[Anexos: ${sentFiles.map((file) => file.name).join(", ")}]` : "";
     const text = [sourceText, attachmentText].filter(Boolean).join("\n");
     const chatId = chat.id;
     const userMsgId = crypto.randomUUID();
     const assistantMsgId = crypto.randomUUID();
+    const requestId = crypto.randomUUID();
+    const model = resolveChatModel(chat.model, installedIds, state.preferredModel);
+    if (model && model !== chat.model) dispatch({ type: "setModel", chatId, model });
 
     dispatch({ type: "addMessage", chatId, message: { id: userMsgId, sender: "user", text, time: "agora" } });
     setDraft(""); setAttachments([]);
+    setActivePopover(null); setModelMenuOpen(false); setApprovalOpen(false);
+    followLatest.current = true;
     setOrbitalState(nextOrbitalState("request-start"));
+    const startedAt = Date.now();
+    dispatch({ type: "addMessage", chatId, message: { id: assistantMsgId, sender: "assistant", text: "", time: "agora", loading: true, model, startedAt } });
 
-    dispatch({
-      type: "addMessage",
-      chatId,
-      message: { id: assistantMsgId, sender: "assistant", text: "Pensando...", time: "agora", loading: true },
-    });
-
-    const history = [...chat.messages, { id: userMsgId, sender: "user" as const, text, time: "agora" }]
-      .map((m) => ({ role: m.sender, content: m.text }));
-
-    try {
-      const reply = await askAI(chat.model, history);
-      dispatch({
-        type: "updateMessage",
-        chatId,
-        messageId: assistantMsgId,
-        text: reply.text,
-        loading: false,
+    setPendingRequest({ requestId, chatId, assistantId: assistantMsgId });
+    let attached = { images: [] as string[], text: "" };
+    try { attached = await readAttachments(sentFiles); }
+    catch (error) { attached.text = `(Não foi possível ler um anexo: ${error instanceof Error ? error.message : String(error)})`; }
+    if (attached.images.length || attached.text) sessionAttachments.set(userMsgId, attached);
+    const history = [...chat.messages.filter((m) => !m.loading && !m.error && m.sender !== "system"), { id: userMsgId, sender: "user" as const, text }]
+      .map((m) => {
+        const extra = sessionAttachments.get(m.id);
+        return { role: m.sender, content: extra?.text ? `${m.text}\n\n${extra.text}` : m.text, images: extra?.images.length ? extra.images : undefined };
       });
-      if (options.speakAfter) startSpeaking(reply.text);
+
+    let content = "";
+    let thinking = "";
+    let thinkingTokens = 0;
+    let thinkingMs: number | undefined;
+    try {
+      if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
+      const reply = await askAI(model, history, {
+        requestId,
+        effort: state.effort,
+        onDelta: (delta) => {
+          content += delta.content;
+          thinking += delta.thinking;
+          thinkingTokens += delta.thinkingTokens ?? estimateTokens(delta.thinking);
+          if (content && thinkingMs === undefined) thinkingMs = Date.now() - startedAt;
+          dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: content, thinking: thinking || undefined, thinkingTokens: thinkingTokens || undefined, thinkingMs, loading: !content } });
+        },
+      });
+      const tokensPerSecond = isQAOffline() ? 28 : reply.tokensPerSecond;
+      if (tokensPerSecond) setLastGeneration({ chatId, model, tokensPerSecond });
+      const fallbackText = reply.cancelled ? "Resposta interrompida." : "O modelo não retornou texto.";
+      const totalThinkingTokens = reply.thinkingTokens ?? (thinkingTokens || undefined);
+      dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: reply.text || fallbackText, thinking: reply.thinking, thinkingTokens: reply.thinking ? totalThinkingTokens : undefined, thinkingMs: reply.thinking ? thinkingMs ?? Date.now() - startedAt : undefined, loading: false, source: reply.cancelled ? `${reply.source} · interrompida` : reply.source, tokensPerSecond, tokens: reply.tokens } });
+      if (options.speakAfter && reply.text) startSpeaking(reply.text);
       else setOrbitalState(nextOrbitalState("reset"));
     } catch (err) {
-      dispatch({
-        type: "updateMessage",
-        chatId,
-        messageId: assistantMsgId,
-        text: `Erro ao obter resposta da IA: ${err}`,
-        loading: false,
-      });
+      const message = err instanceof Error ? err.message : String(err);
+      const modelId = model ? ollamaModelId(model) : undefined;
+      dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: message, loading: false, error: true, source: modelId ? `Ollama (${modelId})` : undefined } });
       setVoiceMode(false);
-      resetOrbitalAfterError(`Erro ao obter resposta da IA: ${err}`);
+      setOrbitalState(nextOrbitalState("error"));
+      if (errorTimer.current) clearTimeout(errorTimer.current);
+      errorTimer.current = setTimeout(() => setOrbitalState(nextOrbitalState("reset")), 1800);
+      if (local.ollama !== "checking") void refreshInstalledModels();
+    } finally {
+      setPendingRequest(undefined);
     }
   }
 
-  function toggleVoice() {
+  async function finishCapture(result: CaptureResult, asrModel: string) {
+    setListening(false);
+    setAudioLevel(undefined);
+    const seconds = result.samples.length / result.sampleRate;
+    if (result.reason === "no-speech" || seconds < 0.4) {
+      setVoiceMode(false);
+      setOrbitalState(nextOrbitalState("reset"));
+      if (result.reason === "no-speech") setVoiceError("Não ouvi nada. Confira o microfone em Configurações › Voz.");
+      return;
+    }
+    setOrbitalState(nextOrbitalState("voice-end"));
+    setTranscribing(true);
+    try {
+      const { text } = await transcribe(result.samples, result.sampleRate, asrModel, state.voice.language);
+      if (!text.trim()) {
+        setVoiceMode(false);
+        resetOrbitalAfterError("Não entendi o que foi dito. Tente de novo, mais perto do microfone.");
+        return;
+      }
+      void send({ text: text.trim(), speakAfter: true });
+    } catch (error) {
+      setVoiceMode(false);
+      resetOrbitalAfterError(`Falha ao transcrever: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  async function toggleVoice() {
     if (orbitalState === "speaking") { stopSpeaking(); return; }
-    if (listening) { stopVoiceSession(); return; }
+    // Parar manualmente envia o que já foi dito.
+    if (listening) { capture.current.stop("stopped", true); return; }
+    if (transcribing) return;
     setVoiceError("");
-    setVoiceMode(true);
-    setListening(true);
-    setOrbitalState(nextOrbitalState("voice-start"));
-    voiceDraft.current = "";
-    voiceRecognitionFailed.current = false;
+    setVoiceNeedsSetup(false);
     if (isQAOffline()) {
+      setVoiceMode(true);
+      setListening(true);
+      setOrbitalState(nextOrbitalState("voice-start"));
       voiceTimer.current = setTimeout(() => {
         setListening(false);
         send({ text: "Teste de conversa por voz no modo QA offline", speakAfter: true });
       }, 750);
       return;
     }
-    void voiceMonitor.current.start(setAudioLevel);
-    speech.listen((text) => { voiceDraft.current = text; setDraft(text); }, () => {
-      voiceMonitor.current.stop();
-      setAudioLevel(undefined);
-      setListening(false);
-      const transcript = voiceDraft.current.trim();
-      if (shouldProcessVoiceTranscript(voiceRecognitionFailed.current, transcript)) send({ text: transcript, speakAfter: true });
-      else if (!voiceRecognitionFailed.current) { setVoiceMode(false); setOrbitalState(nextOrbitalState("reset")); }
-    }, (error) => {
-      voiceRecognitionFailed.current = true;
-      voiceMonitor.current.stop();
-      setAudioLevel(undefined);
+    const asrModel = resolveAsrModel(state.voice.asrModel, tools.installed);
+    if (!asrModel) {
+      setVoiceNeedsSetup(true);
+      setVoiceError("Para conversar por voz, baixe um modelo de reconhecimento local (o WebView2 do Windows não reconhece fala offline).");
+      return;
+    }
+    setVoiceMode(true);
+    setListening(true);
+    setOrbitalState(nextOrbitalState("voice-start"));
+    try {
+      await capture.current.start({ onLevel: (level) => setAudioLevel(level), onFinish: (result) => void finishCapture(result, asrModel) }, state.voice.micDeviceId || undefined);
+    } catch (error) {
       setListening(false);
       setVoiceMode(false);
-      resetOrbitalAfterError(error);
-    });
+      setAudioLevel(undefined);
+      resetOrbitalAfterError(error instanceof Error ? error.message : String(error));
+    }
   }
 
-  useEffect(() => () => { voiceMonitor.current.stop(); if (voiceTimer.current) clearTimeout(voiceTimer.current); if (errorTimer.current) clearTimeout(errorTimer.current); speech.stopSpeaking(); }, []);
+  useEffect(() => () => { capture.current.stop("stopped", false); if (voiceTimer.current) clearTimeout(voiceTimer.current); if (errorTimer.current) clearTimeout(errorTimer.current); speech.stopSpeaking(); }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && activePopover) {
+        event.preventDefault();
+        setActivePopover(null);
+        setModelMenuOpen(false);
+        setApprovalOpen(false);
+        return;
+      }
       if (event.key === "Escape" && (listening || orbitalState === "speaking")) {
         event.preventDefault();
         if (listening) stopVoiceSession(); else stopSpeaking();
+        return;
+      }
+      if (event.key === "Escape" && pendingRequest && !document.querySelector(".modal-backdrop")) {
+        event.preventDefault();
+        void cancelAI(pendingRequest.requestId);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [listening, orbitalState]);
+  }, [activePopover, listening, orbitalState, pendingRequest]);
 
-  function chooseFiles() { fileInput.current?.click(); setAttachmentOpen(false); }
+  function chooseFiles() { fileInput.current?.click(); setActivePopover(null); setModelMenuOpen(false); setApprovalOpen(false); }
+
+  function chooseProject(name: string) {
+    setContextProject(name);
+    setActivePopover(null);
+    setProjectSearch("");
+  }
+
+  function createProjectFromComposer() {
+    const name = `Novo projeto ${state.projects.length + 1}`;
+    dispatch({ type: "newProject" });
+    chooseProject(name);
+  }
+
+  function renderRichText(text: string) {
+    const lines = text.split("\n");
+    return lines.map((line, lineIndex) => {
+      const heading = headingText(line);
+      const content = heading !== undefined
+        ? <strong className="md-heading">{heading}</strong>
+        : tokenizeInline(line).map((token, index) => token.type === "bold" ? <strong key={index}>{token.value}</strong> : token.type === "code" ? <code key={index} className="md-inline-code">{token.value}</code> : token.value);
+      return <Fragment key={lineIndex}>{content}{lineIndex < lines.length - 1 ? "\n" : null}</Fragment>;
+    });
+  }
 
   function renderContent(text: string) {
     if (!text.includes("```")) {
-      return <p style={{ whiteSpace: "pre-wrap" }}>{text}</p>;
+      return <p style={{ whiteSpace: "pre-wrap" }}>{renderRichText(text)}</p>;
     }
     const parts = text.split(/(```[\s\S]*?```)/g);
     return <div>
@@ -223,73 +431,127 @@ export function ChatView() {
             <pre style={{ margin: 0, padding: "12px", fontSize: "13px", fontFamily: "Consolas, monospace", overflowX: "auto" }}><code>{code}</code></pre>
           </div>;
         }
-        return <p key={index} style={{ whiteSpace: "pre-wrap" }}>{part}</p>;
+        return <p key={index} style={{ whiteSpace: "pre-wrap" }}>{renderRichText(part)}</p>;
       })}
     </div>;
   }
 
+  function modelRow(option: LocalModelOption) {
+    const active = chatModel === `${OLLAMA_MODEL_PREFIX}${option.id}`;
+    const pull = local.pulls[option.id];
+    const name = <span className="model-row-name"><b>{option.label}{option.recommended && <em>Recomendado</em>}</b><code>{option.id}</code>{option.status === "incompatible" && <i className="model-row-reason">{option.reason}</i>}</span>;
+    if (option.status === "installed") {
+      return <button key={option.id} className={`model-mode-row ${active ? "active" : ""}`} title={`${option.id} · ${formatBytes(option.sizeBytes)}`} onClick={() => selectModel(option)}>{name}<small>{formatBytes(option.sizeBytes)}</small>{active ? <Check size={14} /> : <span />}</button>;
+    }
+    if (option.status === "incompatible") {
+      return <button key={option.id} className="model-mode-row unavailable" aria-disabled="true" title={option.reason} onClick={(event) => event.preventDefault()}>{name}<small>{formatBytes(option.sizeBytes)}</small><Ban size={13} /></button>;
+    }
+    const downloading = pull?.state === "running";
+    return <button key={option.id} className="model-mode-row downloadable" title={`${option.reason} Clique para baixar.`} onClick={() => openModelSettings(option.id)}>{name}<small>{downloading ? `${describePull(pull).percent ?? 0}%` : formatBytes(option.sizeBytes)}</small><Download size={13} /></button>;
+  }
+
+  function bitnetRow() {
+    const installed = tools.installed.has("bitnet-2b4t");
+    const active = chatModel === BITNET_MODEL;
+    const progress = tools.progress["bitnet-2b4t"];
+    const name = <span className="model-row-name"><b>BitNet b1.58 2B4T</b><code>bitnet.cpp · CPU</code></span>;
+    if (installed) return <button className={`model-mode-row ${active ? "active" : ""}`} title="Modelo de 1 bit da Microsoft rodando na CPU (melhor em inglês)" onClick={selectBitnet}>{name}<small>1,1 GB</small>{active ? <Check size={14} /> : <Cpu size={13} />}</button>;
+    return <button className="model-mode-row downloadable" title="Baixar e compilar em Configurações › Ferramentas de IA" onClick={() => openToolsSettings("bitnet-2b4t")}>{name}<small>{progress?.state === "running" ? progress.phase : "1,1 GB"}</small><Download size={13} /></button>;
+  }
+
+  const installedOptions = localOptions.filter((option) => option.status === "installed");
+  const availableOptions = localOptions.filter((option) => option.status === "available").sort((a, b) => Number(b.recommended) - Number(a.recommended));
+  const incompatibleOptions = localOptions.filter((option) => option.status === "incompatible");
+  const needsModel = !isQAOffline() && !chatModel && local.ollama !== "unknown" && local.ollama !== "checking";
+
   return <section className="view chat-view">
-    <div className="messages">
-      {chat.messages.length === 0 && <div className="empty-chat"><span><Bot size={26} /></span><h3>Como posso ajudar?</h3><p>Comece uma conversa ou escolha uma sugestão.</p><div>{suggestions.map((value) => <button key={value} onClick={() => setDraft(value)}>{value}</button>)}</div></div>}
-      {chat.messages.map((message) => <article key={message.id} className={`message ${message.sender}`}>
-        <div className="message-avatar">{message.sender === "assistant" ? <Bot size={16} /> : "AM"}</div>
-        <div className="message-body"><div className="message-meta"><strong>{message.sender === "assistant" ? "Open Assistant" : "Você"}</strong><time>{message.time}</time></div>
-          {message.loading ? <div style={{ display: "flex", alignItems: "center", gap: "8px", fontStyle: "italic", opacity: 0.8 }}><Sparkles size={14} className="spin" />Pensando...</div> : renderContent(message.text)}
-          {message.sender === "assistant" && !message.loading && <div className="message-tools"><button onClick={() => navigator.clipboard.writeText(message.text)} title="Copiar"><Copy size={13} /></button><button title="Refazer"><RotateCcw size={13} /></button><button onClick={() => startSpeaking(message.text)} title="Ler em voz alta"><Volume2 size={13} /></button></div>}
+    <div className="messages" ref={messagesRef} onScroll={(event) => { const list = event.currentTarget; followLatest.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80; }}>
+      {chat.messages.length === 0 && <div className="empty-chat"><span><Bot size={26} /></span><h3>Como posso ajudar?</h3>
+        {needsModel ? <p className="empty-chat-setup">{local.ollama === "offline" ? "O Ollama não está rodando neste computador." : "Nenhum modelo local foi baixado ainda."}</p> : <p>Comece uma conversa ou escolha uma sugestão.</p>}
+        <div>
+          {needsModel && local.ollama === "offline" && <button onClick={() => startOllama()}><Play size={13} /> Iniciar Ollama</button>}
+          {needsModel && local.ollama === "online" && <button onClick={() => openModelSettings(availableOptions.find((option) => option.recommended)?.id)}><Download size={13} /> Escolher e baixar um modelo</button>}
+          {!needsModel && suggestions.map((value) => <button key={value} onClick={() => setDraft(value)}>{value}</button>)}
         </div>
-      </article>)}
+      </div>}
+      {chat.messages.map((message) => {
+        if (message.sender === "user") return <article key={message.id} className="msg msg-user"><div className="msg-bubble">{renderContent(message.text)}</div></article>;
+        const streaming = pendingRequest?.assistantId === message.id && !message.loading;
+        const interrupted = message.source?.includes("interrompida");
+        return <article key={message.id} className={`msg msg-assistant ${message.error ? "error" : ""}`}>
+          {message.loading
+            ? <ThinkingIndicator messageId={message.id} startedAt={message.startedAt} tokens={message.thinkingTokens} preview={message.thinking} />
+            : message.error
+              ? <div className="message-error"><p>{message.text}</p><div>{local.ollama === "offline" && <button onClick={() => startOllama()}><Play size={12} />Iniciar Ollama</button>}<button onClick={() => openModelSettings()}><Bot size={12} />Modelos locais</button></div></div>
+              : <>{message.thinking && <details className="message-thinking"><summary>{thinkingSummary(message.thinkingMs, message.thinkingTokens)}</summary><p>{message.thinking}</p></details>}<div className={`msg-content ${streaming ? "streaming" : ""}`}>{renderContent(message.text)}</div></>}
+          {!message.loading && !streaming && <footer className="msg-footer">
+            <span className="msg-meta">{replyFooter(message.model, message.source, message.tokens, message.tokensPerSecond)}{interrupted && <span className="msg-tag">interrompida</span>}</span>
+            {!message.error && <div className="msg-tools"><button onClick={() => navigator.clipboard.writeText(message.text)} title="Copiar"><Copy size={13} /></button><button onClick={() => startSpeaking(message.text)} title="Ler em voz alta"><Volume2 size={13} /></button></div>}
+          </footer>}
+        </article>;
+      })}
     </div>
-    <section className={`chat-orbital-stage ${chat.messages.length > 2 ? "compact" : ""} ${voiceMode ? "voice-mode" : ""}`} aria-label="Estado da conversa por voz">
-      <OrbitalCanvas skin={state.orbitalSkin} state={orbitalState} audioLevel={audioLevel} reducedMotion={reducedMotion} />
+    {stageVisible && <section className={`voice-stage ${voiceActive ? "" : "leaving"}`} aria-label="Conversa por voz">
+      <AssistantFace skin={state.orbitalSkin} state={orbitalState} expression={expression} audioLevel={audioLevel} reducedMotion={reducedMotion} speechPulse={speechPulse} className="orbital-canvas voice-face" />
       <p className="orbital-status" aria-live="polite">{activityLabel(orbitalState)}</p>
-      <div className="orbital-skin-picker" role="radiogroup" aria-label="Escolher aparência da orbital">
-        {([
-          ["tentacles", Sparkles, "Tentáculos azuis"],
-          ["sphere", CircleDot, "Esfera azul"],
-          ["atom", Atom, "Átomo"],
-        ] as const).map(([skin, Icon, label]) => <button key={skin} type="button" role="radio" aria-checked={state.orbitalSkin === skin} className={state.orbitalSkin === skin ? "active" : ""} title={label} onClick={() => dispatch({ type: "setOrbitalSkin", skin: skin as OrbitalSkin })}><Icon size={14} /><span className="sr-only">{label}</span></button>)}
-      </div>
-    </section>
-    <div className="composer-wrap apple-composer-wrap">
-      {voiceError && <div className="inline-error">{voiceError}</div>}
+    </section>}
+    <div className="composer-wrap apple-composer-wrap" ref={composerRef}>
+      {voiceError && <div className="inline-error">{voiceError}{(voiceNeedsSetup || orbitalState === "error") && <button onClick={openVoiceSettings}><Mic size={12} />Configurar voz</button>}<button aria-label="Fechar aviso" onClick={() => { setVoiceError(""); setVoiceNeedsSetup(false); }}><X size={12} /></button></div>}
       <div className={`composer apple-composer ${listening ? "listening" : ""}`}>
         {listening && <div className="voice-wave"><i /><i /><i /><i /><i /><i /><i /></div>}
         {attachments.length > 0 && <div className="attachment-chips">{attachments.map((file) => <span key={`${file.name}-${file.size}`}><FileText size={12} />{file.name}<button onClick={() => setAttachments((items) => items.filter((item) => item !== file))}><X size={11} /></button></span>)}</div>}
-        <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder={listening ? "Ouvindo…" : "Pergunte qualquer coisa"} rows={1} />
+        <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder={listening ? "Ouvindo… (clique no quadrado para enviar)" : transcribing ? "Transcrevendo…" : chatModel ? `Pergunte ao ${ollamaModelId(chatModel) ?? modelDisplayName(chatModel)}` : "Pergunte qualquer coisa"} rows={1} />
         <div className="composer-toolbar apple-composer-toolbar">
           <div className="composer-left-actions">
-            <button className="composer-plus" title="Adicionar anexo" onClick={() => setAttachmentOpen((open) => !open)}><Paperclip size={16} /></button>
-            {attachmentOpen && <div className="composer-popover attachment-popover"><button onClick={chooseFiles}><FileText size={14} />Arquivo</button><button onClick={chooseFiles}><Image size={14} />Imagem</button></div>}
-            <div className="model-mode-control">
-              <button className={`model-mode-trigger ${modelMenuOpen ? "active" : ""}`} title="Configurações do modelo" onClick={() => setModelMenuOpen((open) => !open)}><Sparkles size={14} /><span>{chat.model}</span><ChevronDown size={11} /></button>
-              {modelMenuOpen && <div className="model-mode-menu" style={{ maxHeight: "320px", overflowY: "auto" }}>
-                <span style={{ fontSize: "11px", padding: "6px 12px", opacity: 0.6, textTransform: "uppercase" }}>Escolha o Modelo</span>
-                {modelList.map((m) => (
-                  <button key={m} className={`model-mode-row ${chat.model === m ? "active" : ""}`} onClick={() => { dispatch({ type: "setModel", chatId: chat.id, model: m }); setModelMenuOpen(false); }}>
-                    <span>{m}</span>
-                    {chat.model === m ? <Check size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                ))}
+            <button className={`composer-plus ${quickMenuOpen ? "active" : ""}`} title="Mais opções" aria-label="Mais opções" aria-expanded={quickMenuOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "quick")); setModelMenuOpen(false); setApprovalOpen(false); }}><Plus size={17} /></button>
+            {quickMenuOpen && <div className="composer-popover quick-actions-popover">
+              <button onClick={() => { setModelMenuOpen((open) => !open); setApprovalOpen(false); void refreshInstalledModels(); }}><span><Sparkles size={14} />Modelo de IA</span><small>{chatModel ? ollamaModelId(chatModel) : "Nenhum"}<ChevronRight size={14} /></small></button>
+              {modelMenuOpen && <div className="model-mode-menu quick-submenu model-picker">
+                {local.ollama === "offline" && <button className="model-mode-row ollama-offline" onClick={() => startOllama()} title={local.ollamaError}><span className="model-row-name"><b>Ollama parado</b><code>127.0.0.1:11434</code></span><small>Iniciar</small><Play size={13} /></button>}
+                {local.ollama === "checking" && <small className="local-model-empty">Verificando o Ollama…</small>}
+                <span className="menu-section-label">Instalados</span>
+                {installedOptions.length === 0 && <small className="local-model-empty">{local.ollama === "online" ? "Nenhum modelo baixado ainda" : "Inicie o Ollama para listar os modelos"}</small>}
+                {installedOptions.map(modelRow)}
+                {availableOptions.length > 0 && <span className="menu-section-label">Disponíveis para este PC</span>}
+                {availableOptions.map(modelRow)}
+                <span className="menu-section-label">Microsoft BitNet · 1 bit</span>
+                {bitnetRow()}
+                {incompatibleOptions.length > 0 && <span className="menu-section-label">Incompatíveis</span>}
+                {incompatibleOptions.map(modelRow)}
                 <i className="model-mode-divider" />
-                <button className="model-mode-row" onClick={() => setEffort((value) => value === "Alto" ? "Padrão" : "Alto")}><span>Esforço</span><small>{effort}</small><ChevronRight size={18} /></button>
-                <button className="model-mode-row" onClick={() => setSpeed((value) => value === "Padrão" ? "Rápida" : "Padrão")}><span>Velocidade</span><small>{speed}</small><ChevronRight size={18} /></button>
-                <i className="model-mode-divider" />
-                <button className="model-mode-row reset" onClick={() => { setEffort("Alto"); setSpeed("Padrão"); setModelMenuOpen(false); }}><span>Redefinir para o padrão</span><RotateCcw size={18} /></button>
+                <button className="model-mode-row" onClick={() => openModelSettings()}><span>Gerenciar modelos locais</span><small /><ChevronRight size={16} /></button>
               </div>}
-            </div>
-            <button className={`project-context ${projectOpen ? "active" : ""}`} title="Projeto de contexto" onClick={() => setProjectOpen((open) => !open)}><Folder size={14} /><span>{contextProject}</span><ChevronDown size={11} /></button>
-            {projectOpen && <div className="composer-popover project-popover"><button onClick={() => { setContextProject("Open Assistant"); setProjectOpen(false); }}><Check size={13} />Open Assistant</button><button onClick={() => { setContextProject("Sem projeto"); setProjectOpen(false); }}><X size={13} />Sem projeto</button></div>}
-            <button className={`approval-mode ${approvalOpen ? "active" : ""}`} title="Modo de aprovação" onClick={() => setApprovalOpen((open) => !open)}><ShieldCheck size={14} /><span>{approval}</span><ChevronDown size={11} /></button>
-            {approvalOpen && <div className="composer-popover approval-popover">{(["Perguntar", "Automático", "Somente leitura"] as ApprovalMode[]).map((mode) => <button key={mode} onClick={() => { setApproval(mode); setApprovalOpen(false); }}>{approval === mode && <Check size={13} />}{mode}</button>)}</div>}
+              <EffortControl value={state.effort} onChange={(effort) => dispatch({ type: "setEffort", effort })} reducedMotion={reducedMotion} />
+              <i className="menu-divider" />
+              <button onClick={() => setApprovalOpen((open) => !open)}><span><ShieldCheck size={14} />Acesso ao computador</span><small>{approval}<ChevronRight size={14} /></small></button>
+              {approvalOpen && <div className="approval-inline">{(["Perguntar", "Automático", "Somente leitura"] as ApprovalMode[]).map((mode) => <button key={mode} onClick={() => { setApproval(mode); setApprovalOpen(false); }}><span>{approval === mode && <Check size={13} />}{mode}</span></button>)}</div>}
+              <label className="access-level-control"><span><strong>Nível de acesso</strong><small>{accessLevel >= 85 ? "Total" : accessLevel >= 45 ? "Limitado" : "Somente leitura"}</small></span><input type="range" min="0" max="100" value={accessLevel} aria-label="Nível de acesso ao computador" onChange={(event) => setAccessLevel(Number(event.target.value))} /></label>
+              <i className="menu-divider" />
+              <button onClick={chooseFiles}><span><FileText size={14} />Anexar documento</span></button>
+              <button onClick={chooseFiles}><span><Image size={14} />Anexar foto</span></button>
+            </div>}
+            <button className={`project-context ${projectOpen ? "active" : ""}`} title="Projeto de contexto" aria-expanded={projectOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "project")); setModelMenuOpen(false); setApprovalOpen(false); }}><Folder size={14} /><span>{contextProject}</span></button>
+            {projectOpen && <div className="composer-popover project-popover">
+              <input autoFocus value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Buscar projetos" aria-label="Buscar projetos" />
+              <span className="menu-section-label">Projetos</span>
+              {filteredProjects.map((project) => <button key={project.id} onClick={() => chooseProject(project.name)}><span><Folder size={13} />{project.name}</span>{contextProject === project.name && <Check size={13} />}</button>)}
+              <button onClick={() => chooseProject("Sem projeto")}><span><X size={13} />Sem projeto</span>{contextProject === "Sem projeto" && <Check size={13} />}</button>
+              <i className="menu-divider" />
+              <button onClick={createProjectFromComposer}><span><Plus size={14} />Novo projeto</span></button>
+            </div>}
           </div>
           <div className="composer-right-actions">
-            <button className="context-usage" title="Janela de contexto" onClick={() => setContextOpen((open) => !open)}><Gauge size={14} /><span>8k</span></button>
-            {contextOpen && <div className="composer-popover context-popover"><strong>Janela de contexto</strong><small>1.2k de 8k tokens usados</small><i><b /></i></div>}
-            <button className={listening || orbitalState === "speaking" ? "active" : ""} onClick={toggleVoice} title={listening ? "Parar ditado" : orbitalState === "speaking" ? "Parar fala" : "Ditado"}>{listening || orbitalState === "speaking" ? <Square size={14} /> : <Mic size={16} />}</button>
-            <button className="send-button apple-send" onClick={listening || orbitalState === "speaking" ? toggleVoice : canSend ? () => send() : toggleVoice} title={listening ? "Parar ditado" : orbitalState === "speaking" ? "Parar fala" : canSend ? "Enviar" : "Iniciar conversa por voz"}>{listening || orbitalState === "speaking" ? <Square size={14} /> : canSend ? <ArrowUp size={17} /> : <AudioLines size={16} />}</button>
+            <button className={`ai-meter ${aiMeter.kind}`} title={`${aiMeter.label}. ${aiMeter.throughput}`} aria-label={`Uso de IA: ${aiMeter.label}. ${aiMeter.throughput}`} aria-expanded={meterOpen} onClick={() => setActivePopover(nextComposerPopover(activePopover, "meter"))}><i><b>{aiMeter.kind === "local" ? "∞" : aiMeter.kind === "qa" ? "QA" : "—"}</b></i></button>
+            {meterOpen && <div className="composer-popover meter-popover"><strong>{aiMeter.label}</strong><small>{aiMeter.detail}</small><span>{aiMeter.throughput}</span></div>}
+            <button className="send-button apple-send" onClick={generating ? () => cancelAI(pendingRequest!.requestId) : listening || orbitalState === "speaking" ? toggleVoice : canSend ? () => send() : toggleVoice} title={generating ? "Parar resposta" : listening ? "Parar ditado" : orbitalState === "speaking" ? "Parar fala" : canSend ? "Enviar" : "Iniciar conversa por voz"}>{generating || listening || orbitalState === "speaking" ? <Square size={14} /> : canSend ? <ArrowUp size={17} /> : <AudioLines size={16} />}</button>
           </div>
         </div>
-        <input ref={fileInput} type="file" multiple hidden onChange={(event) => { setAttachments((files) => [...files, ...Array.from(event.target.files ?? [])]); event.currentTarget.value = ""; }} />
+        <input ref={fileInput} type="file" multiple hidden onChange={(event) => {
+          // Copia antes de limpar o input: o updater roda depois, quando `files` já estaria vazio.
+          const picked = Array.from(event.currentTarget.files ?? []);
+          setAttachments((files) => [...files, ...picked]);
+          event.currentTarget.value = "";
+        }} />
       </div>
       <span className="composer-hint">Enter envia · Shift + Enter quebra linha</span>
     </div>

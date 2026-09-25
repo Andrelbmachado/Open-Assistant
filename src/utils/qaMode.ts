@@ -7,6 +7,10 @@ export function isQAOffline(): boolean {
   return import.meta.env.VITE_QA_OFFLINE === "true";
 }
 
+export function shouldSubscribeToLocalModelEvents(qaOffline: boolean): boolean {
+  return !qaOffline;
+}
+
 export function createOfflineQAReply(prompt: string, modelName: string): OfflineQAReply {
   const normalized = prompt.toLowerCase();
 

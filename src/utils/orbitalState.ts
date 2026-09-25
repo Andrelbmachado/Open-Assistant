@@ -1,12 +1,22 @@
-export const ORBITAL_SKINS = ["sphere", "atom", "tentacles"] as const;
+export const ORBITAL_SKINS = ["robot", "super", "tentacles", "sphere", "atom"] as const;
 export type OrbitalSkin = (typeof ORBITAL_SKINS)[number];
+/** Skins desenhadas pelo canvas de partículas original. */
+export type ParticleSkin = Extract<OrbitalSkin, "tentacles" | "sphere" | "atom">;
+
+export const ORBITAL_SKIN_LABELS: Record<OrbitalSkin, string> = {
+  robot: "Robô",
+  super: "Super orbital",
+  tentacles: "Tentáculos",
+  sphere: "Esfera",
+  atom: "Átomo",
+};
 
 export const ORBITAL_STATES = ["idle", "listening", "processing", "speaking", "error"] as const;
 export type OrbitalState = (typeof ORBITAL_STATES)[number];
 
 export type OrbitalEvent = "voice-start" | "voice-end" | "request-start" | "speech-start" | "speech-end" | "error" | "reset";
 
-export const DEFAULT_ORBITAL_SKIN: OrbitalSkin = "tentacles";
+export const DEFAULT_ORBITAL_SKIN: OrbitalSkin = "robot";
 
 export interface OrbitalMotion {
   geometry: "wave" | "orbit" | "tentacle";
@@ -57,7 +67,7 @@ export function simulatedAudioLevel(state: OrbitalState, timeMs: number) {
   return .1 + wave * .18;
 }
 
-export function getOrbitalMotion(skin: OrbitalSkin, state: OrbitalState, audioLevel = 0): OrbitalMotion {
+export function getOrbitalMotion(skin: ParticleSkin, state: OrbitalState, audioLevel = 0): OrbitalMotion {
   const level = Math.max(0, Math.min(1, audioLevel));
   const activity = state === "idle" ? .16 : state === "processing" ? .58 : state === "error" ? .7 : .42 + level * .58;
   const stateBoost = state === "speaking" ? .25 : state === "listening" ? .12 : 0;

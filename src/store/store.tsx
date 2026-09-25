@@ -1,10 +1,24 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, type ReactNode } from "react";
 import { hasWorkspaceArea, isValidWorkspaceLayout, type ViewKind, type WorkspaceArea, type WorkspaceLayoutNode, type WorkspaceSplit } from "../utils/workspaceLayout";
 import { DEFAULT_ORBITAL_SKIN, isOrbitalSkin, type OrbitalSkin } from "../utils/orbitalState";
+import { DEFAULT_EFFORT, isEffortLevel, type EffortLevel } from "../utils/effort";
 
 export type { ViewKind, WorkspaceArea, WorkspaceLayoutNode, WorkspaceSplit } from "../utils/workspaceLayout";
 
 export type Theme = "dark" | "light" | "system";
+export type SettingsTab = "general" | "providers" | "models" | "tools" | "voice" | "runtimes" | "permissions";
+
+/** Preferências do modo voz. Ids de modelo vêm de `utils/toolCatalog.ts`. */
+export interface VoiceSettings {
+  /** Modelo de reconhecimento escolhido; vazio = o recomendado entre os instalados. */
+  asrModel?: string;
+  /** `system` (Windows) ou uma voz Piper; vazio = a recomendada entre as instaladas. */
+  ttsVoice?: string;
+  /** `deviceId` do microfone; vazio = padrão do Windows. */
+  micDeviceId?: string;
+  language: string;
+  speed: number;
+}
 
 export interface ChatMessage {
   id: string;
@@ -12,6 +26,20 @@ export interface ChatMessage {
   text: string;
   time: string;
   loading?: boolean;
+  /** Quem gerou a resposta, por exemplo `Ollama (qwen3.5:9b)`. */
+  source?: string;
+  tokensPerSecond?: number;
+  /** Tokens gerados na resposta (`eval_count` do Ollama / `predicted_n` do BitNet). */
+  tokens?: number;
+  thinking?: string;
+  error?: boolean;
+  /** Modelo escolhido quando a resposta foi pedida (ex.: `Ollama: qwen3.5:9b`). */
+  model?: string;
+  /** Início da geração (epoch ms), para o cronômetro do indicador de raciocínio. */
+  startedAt?: number;
+  /** Tempo até o primeiro trecho da resposta final. */
+  thinkingMs?: number;
+  thinkingTokens?: number;
 }
 
 export interface WorkflowNode {
@@ -72,10 +100,19 @@ export interface AppState {
   splitRatio: number;
   sidebarCollapsed: boolean;
   settingsOpen: boolean;
+  /** Pedido pontual para abrir Configurações numa aba/modelo específico. */
+  settingsTab?: SettingsTab;
+  settingsFocusModel?: string;
   paletteOpen: boolean;
+  /** Último modelo local escolhido; usado por conversas novas. */
+  preferredModel?: string;
   theme: Theme;
   accent: string;
   orbitalSkin: OrbitalSkin;
+  /** Versão do rosto padrão; ao subir, o novo padrão substitui a skin salva. */
+  faceVersion: number;
+  effort: EffortLevel;
+  voice: VoiceSettings;
   activeChatId: string;
   chats: Chat[];
   projects: Project[];
@@ -92,11 +129,13 @@ type Action =
   | { type: "toggleSplit" }
   | { type: "splitRatio"; value: number }
   | { type: "sidebar" }
-  | { type: "settings"; open: boolean }
+  | { type: "settings"; open: boolean; tab?: SettingsTab; focusModel?: string }
   | { type: "palette"; open: boolean }
   | { type: "theme"; theme: Theme }
   | { type: "accent"; accent: string }
   | { type: "setOrbitalSkin"; skin: OrbitalSkin }
+  | { type: "setEffort"; effort: EffortLevel }
+  | { type: "setVoice"; patch: Partial<VoiceSettings> }
   | { type: "sendMessage"; text: string }
   | { type: "moveNode"; id: string; x: number; y: number }
   | { type: "connectNodes"; from: string; to: string; fromPort?: number; toPort?: number }
@@ -117,7 +156,7 @@ type Action =
   | { type: "newChat"; projectId?: string }
   | { type: "selectChat"; id: string }
   | { type: "addMessage"; chatId: string; message: ChatMessage }
-  | { type: "updateMessage"; chatId: string; messageId: string; text: string; loading?: boolean }
+  | { type: "updateMessage"; chatId: string; messageId: string; patch: Partial<Omit<ChatMessage, "id">> }
   | { type: "setModel"; chatId: string; model: string };
 
 function isArea(node: WorkspaceLayoutNode): node is WorkspaceArea { return "view" in node; }
@@ -163,12 +202,15 @@ const initialState: AppState = {
   theme: "dark",
   accent: "#b7b7bd",
   orbitalSkin: DEFAULT_ORBITAL_SKIN,
+  faceVersion: 2,
+  effort: DEFAULT_EFFORT,
+  voice: { language: "pt", speed: 1 },
   activeChatId: "welcome",
   chats: [
     {
       id: "welcome",
       title: "Conversa inicial",
-      model: "GPT-5",
+      model: "",
       messages: [
         {
           id: "hello",
@@ -178,8 +220,8 @@ const initialState: AppState = {
         },
       ],
     },
-    { id: "runtime", title: "Configurar modelos locais", model: "Local", messages: [] },
-    { id: "design", title: "Revisão do workspace", model: "Claude", messages: [] },
+    { id: "runtime", title: "Configurar modelos locais", model: "", messages: [] },
+    { id: "design", title: "Revisão do workspace", model: "", messages: [] },
   ],
   projects: [{ id: "open-assistant", name: "Open Assistant" }],
   nodes: [
@@ -212,11 +254,13 @@ function reducer(state: AppState, action: Action): AppState {
     case "toggleSplit": return { ...state, splitEnabled: !state.splitEnabled };
     case "splitRatio": return { ...state, splitRatio: Math.min(0.8, Math.max(0.25, action.value)) };
     case "sidebar": return { ...state, sidebarCollapsed: !state.sidebarCollapsed };
-    case "settings": return { ...state, settingsOpen: action.open };
+    case "settings": return { ...state, settingsOpen: action.open, settingsTab: action.open ? action.tab : undefined, settingsFocusModel: action.open ? action.focusModel : undefined };
     case "palette": return { ...state, paletteOpen: action.open };
     case "theme": return { ...state, theme: action.theme };
     case "accent": return { ...state, accent: action.accent };
     case "setOrbitalSkin": return { ...state, orbitalSkin: action.skin };
+    case "setEffort": return { ...state, effort: action.effort };
+    case "setVoice": return { ...state, voice: { ...state.voice, ...action.patch } };
     case "moveNode": return { ...state, nodes: state.nodes.map((node) => node.id === action.id ? { ...node, x: action.x, y: action.y } : node) };
     case "connectNodes": {
       if (action.from === action.to || state.connections.some((connection) => connection.from === action.from && connection.to === action.to && (connection.fromPort ?? 0) === (action.fromPort ?? 0) && (connection.toPort ?? 0) === (action.toPort ?? 0))) return state;
@@ -270,7 +314,7 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case "newChat": {
       const id = crypto.randomUUID();
-      return { ...state, activeChatId: id, activeView: "chat", workspaceLayout: updateAreaView(state.workspaceLayout, state.activeAreaId, "chat"), chats: [{ id, title: "Nova conversa", model: "GPT-5", messages: [], projectId: action.projectId }, ...state.chats] };
+      return { ...state, activeChatId: id, activeView: "chat", workspaceLayout: updateAreaView(state.workspaceLayout, state.activeAreaId, "chat"), chats: [{ id, title: "Nova conversa", model: state.preferredModel ?? "", messages: [], projectId: action.projectId }, ...state.chats] };
     }
     case "selectChat": return { ...state, activeChatId: action.id, activeView: "chat", workspaceLayout: updateAreaView(state.workspaceLayout, state.activeAreaId, "chat") };
     case "sendMessage": {
@@ -294,7 +338,7 @@ function reducer(state: AppState, action: Action): AppState {
                 ...chat,
                 messages: chat.messages.map((m) =>
                   m.id === action.messageId
-                    ? { ...m, text: action.text, loading: action.loading ?? m.loading }
+                    ? { ...m, ...action.patch }
                     : m
                 ),
               }
@@ -305,6 +349,7 @@ function reducer(state: AppState, action: Action): AppState {
     case "setModel": {
       return {
         ...state,
+        preferredModel: action.model.startsWith("Ollama: ") || action.model.startsWith("BitNet: ") ? action.model : state.preferredModel,
         chats: state.chats.map((chat) =>
           chat.id === action.chatId ? { ...chat, model: action.model } : chat
         ),
@@ -312,6 +357,11 @@ function reducer(state: AppState, action: Action): AppState {
     }
     default: return state;
   }
+}
+
+/** Respostas que estavam sendo geradas quando o app fechou não voltam a "pensar" para sempre. */
+function settleInterruptedMessages(chats: Chat[]): Chat[] {
+  return chats.map((chat) => ({ ...chat, messages: chat.messages.map((message) => message.loading ? { ...message, loading: false, text: message.text || "Resposta interrompida." } : message) }));
 }
 
 const StoreContext = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(null);
@@ -325,7 +375,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const layoutIsCurrent = restored.layoutVersion === fallback.layoutVersion
         && isValidWorkspaceLayout(restored.workspaceLayout)
         && hasWorkspaceArea(restored.workspaceLayout, restored.activeAreaId);
-      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, orbitalSkin: isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, chats: layoutIsCurrent ? (restored.chats ?? fallback.chats) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, paletteOpen: false };
+      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, orbitalSkin: restored.faceVersion === fallback.faceVersion && isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, faceVersion: fallback.faceVersion, effort: isEffortLevel(restored.effort) ? restored.effort : fallback.effort, voice: { ...fallback.voice, ...(restored.voice ?? {}) }, chats: layoutIsCurrent ? settleInterruptedMessages(restored.chats ?? fallback.chats) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, settingsTab: undefined, settingsFocusModel: undefined, paletteOpen: false };
     } catch { return fallback; }
   });
 

@@ -1,4 +1,4 @@
-import { Activity, Bot, Boxes, Check, ChevronDown, Copy, Cpu, FileCode, FileText, FolderOpen, MessageSquare, MoreHorizontal, Plus, ShoppingBag, TerminalSquare, Workflow } from "lucide-react";
+import { Activity, Bot, Boxes, Check, Copy, Cpu, FileCode, FileText, FolderOpen, MessageSquare, MoreHorizontal, Plus, ShoppingBag, TerminalSquare, Workflow } from "lucide-react";
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { useStore, type ViewKind, type WorkspaceArea, type WorkspaceLayoutNode, type WorkspaceSplit } from "../store/store";
 import { calculateSplitIntent, type Corner } from "../utils/workspaceLayout";
@@ -133,6 +133,7 @@ function AreaShell({ area }: { area: WorkspaceArea }) {
   const { state, dispatch } = useStore();
   const root = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<SplitDrag | null>(null);
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const dragRef = useRef<SplitDrag | null>(null);
   const intent = drag && root.current ? calculateSplitIntent(drag.corner, drag.deltaX, drag.deltaY, root.current.clientWidth, root.current.clientHeight) : null;
   const corners: Corner[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
@@ -154,9 +155,13 @@ function AreaShell({ area }: { area: WorkspaceArea }) {
     clearDrag();
   };
 
+  const CurrentViewIcon = area.view === "chat" ? MessageSquare : area.view === "workflow" ? Workflow : area.view === "terminal" ? TerminalSquare : area.view === "files" ? FolderOpen : area.view === "agents" ? Bot : area.view === "marketplace" ? ShoppingBag : Activity;
   return <div className={`area-shell ${state.activeAreaId === area.id ? "active" : ""}`} ref={root} onPointerDown={() => dispatch({ type: "activateArea", id: area.id })} onPointerMove={updateDrag} onPointerUp={finishDrag} onPointerCancel={clearDrag} onLostPointerCapture={clearDrag}>
     <ViewRenderer kind={area.view} />
-    <div className="area-controls"><MessageSquare size={13} /><select value={area.view} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => { dispatch({ type: "activateArea", id: area.id }); dispatch({ type: "view", view: event.target.value as ViewKind }); }}>{areaViews.map((view) => <option key={view} value={view}>{labels[view]}</option>)}</select><ChevronDown size={12} /></div>
+    <div className={`area-controls ${viewMenuOpen ? "open" : ""}`} onMouseEnter={() => setViewMenuOpen(true)} onMouseLeave={() => setViewMenuOpen(false)}>
+      <button className="area-view-trigger" aria-label={`Trocar tipo de área: ${labels[area.view]}`} aria-expanded={viewMenuOpen} onPointerDown={(event) => event.stopPropagation()} onClick={() => setViewMenuOpen((open) => !open)}><CurrentViewIcon size={14} /></button>
+      <div className="area-view-menu" role="menu">{areaViews.map((view) => { const Icon = view === "chat" ? MessageSquare : view === "workflow" ? Workflow : view === "terminal" ? TerminalSquare : view === "files" ? FolderOpen : view === "agents" ? Bot : view === "marketplace" ? ShoppingBag : Activity; return <button key={view} role="menuitem" aria-label={labels[view]} className={area.view === view ? "active" : ""} onPointerDown={(event) => event.stopPropagation()} onClick={() => { dispatch({ type: "activateArea", id: area.id }); dispatch({ type: "view", view }); setViewMenuOpen(false); }}><Icon size={14} /><span className="sr-only">{labels[view]}</span></button>; })}</div>
+    </div>
     {intent && <div className={`area-split-preview ${intent.axis} ${intent.newAreaFirst ? "first" : "second"}`} style={intent.axis === "horizontal" ? { width: `${(intent.newAreaFirst ? intent.fraction : 1 - intent.fraction) * 100}%` } : { height: `${(intent.newAreaFirst ? intent.fraction : 1 - intent.fraction) * 100}%` }} />}
     {corners.map((corner) => <button key={corner} className={`area-corner ${corner}`} aria-label="Arraste para criar uma nova área" onPointerDown={(event) => { event.stopPropagation(); const next = { corner, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, deltaX: 0, deltaY: 0 }; root.current?.setPointerCapture(event.pointerId); dragRef.current = next; setDrag(next); dispatch({ type: "activateArea", id: area.id }); }} />)}
   </div>;

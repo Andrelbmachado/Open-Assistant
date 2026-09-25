@@ -1,0 +1,506 @@
+# Fonte consumida pelo router. Edite aqui e no INDEX.md juntos.
+version: 1
+thresholds:
+  alias_hit: 1.0
+  embed_execute: 0.82
+  embed_ask_llm: 0.65
+
+intents:
+  - id: open_browser
+    risk: safe
+    script: open_browser
+    aliases:
+      - abre o navegador
+      - abrir navegador
+      - abre navegador
+      - inicia o navegador
+      - sobe o navegador
+      - abre a internet
+      - open browser
+      - abre o chrome
+      - abrir chrome
+      - abre o google chrome
+      - open chrome
+      - sobe o chrome
+      - inicia o chrome
+      - abre o edge
+      - abrir edge
+      - abre o firefox
+      - abrir firefox
+      - abre o brave
+    examples:
+      - pode abrir o navegador
+      - abre o chrome pra mim
+      - quero o firefox
+    extract:
+      browser: "(chrome|edge|firefox|brave)"
+
+  - id: open_url
+    risk: safe
+    script: open_url
+    aliases:
+      - abre o site
+      - abrir site
+      - abre a url
+      - abrir url
+      - abre o link
+      - vai no site
+      - open url
+      - open site
+    examples:
+      - abre o youtube
+      - abre https://github.com
+      - vai no gmail
+    extract:
+      url: "(https?://\\S+|www\\.\\S+)"
+      site: "(youtube|gmail|github|whatsapp|instagram|twitter|x\\.com|reddit|notion)"
+
+  - id: browser_search
+    risk: safe
+    script: browser_search
+    aliases:
+      - pesquisa no google
+      - pesquisar no google
+      - busca na internet
+      - pesquisa por
+      - procura na web
+      - google
+      - search
+    examples:
+      - pesquisa no google clima em são paulo
+      - busca na internet rtx 5070 vram
+
+  - id: open_explorer
+    risk: safe
+    script: open_explorer
+    aliases:
+      - abre o explorador
+      - abrir explorador
+      - abre o explorer
+      - file explorer
+      - abre os arquivos
+      - win+e
+      - abre a pasta
+    examples:
+      - abre o explorador de arquivos
+      - abre a pasta downloads
+
+  - id: open_app
+    risk: safe
+    script: open_app
+    aliases:
+      - abre o
+      - abrir o
+      - abre a
+      - inicia o
+      - sobe o
+      - open
+    examples:
+      - abre o discord
+      - abre o vscode
+      - inicia o spotify
+    needs_slot: app
+
+  - id: open_vscode
+    risk: safe
+    script: open_vscode
+    aliases:
+      - abre o vscode
+      - abre o vs code
+      - abrir vscode
+      - abre o código
+      - abre o cursor
+      - open vscode
+    examples:
+      - abre o vs code no projeto atual
+
+  - id: focus_app
+    risk: safe
+    script: focus_app
+    aliases:
+      - foca no
+      - focar
+      - traz pra frente
+      - traz para frente
+      - maximiza o
+    needs_slot: app
+
+  - id: close_app
+    risk: confirm
+    script: close_app
+    aliases:
+      - fecha o
+      - fechar
+      - encerra o
+      - close
+    needs_slot: app
+
+  - id: list_windows
+    risk: safe
+    script: list_windows
+    aliases:
+      - janelas abertas
+      - o que está aberto
+      - apps abertos
+      - programas abertos
+      - lista janelas
+
+  - id: list_apps_installed
+    risk: safe
+    script: list_apps_installed
+    aliases:
+      - programas instalados
+      - o que tem instalado
+      - apps instalados
+      - lista programas
+
+  - id: kill_process
+    risk: confirm
+    script: kill_process
+    aliases:
+      - mata o processo
+      - kill
+      - força fechar
+      - taskkill
+    needs_slot: process
+
+  - id: set_volume
+    risk: safe
+    script: set_volume
+    aliases:
+      - volume
+      - som
+      - abaixa o som
+      - aumenta o som
+      - diminui o volume
+      - aumenta o volume
+      - deixa o volume
+    examples:
+      - volume 30
+      - deixa o som no 50
+      - abaixa o volume
+    extract:
+      level: "(\\d{1,3})"
+
+  - id: mute
+    risk: safe
+    script: mute
+    aliases:
+      - muda
+      - mute
+      - silencia
+      - tira o som
+      - unmude
+      - unmute
+      - ativa o som
+      - volta o som
+      - tira o mute
+
+  - id: set_brightness
+    risk: safe
+    script: set_brightness
+    aliases:
+      - brilho
+      - aumenta o brilho
+      - diminui o brilho
+      - escurece a tela
+      - clareia a tela
+    extract:
+      level: "(\\d{1,3})"
+
+  - id: open_settings
+    risk: safe
+    script: open_settings
+    aliases:
+      - abre as configurações
+      - abre configurações
+      - abre settings
+      - configurações do windows
+      - painel de controle
+    extract:
+      page: "(display|sound|network|appsfeatures|windowsupdate|privacy|powersleep)"
+
+  - id: network_status
+    risk: safe
+    script: network_status
+    aliases:
+      - status da rede
+      - meu ip
+      - estou online
+      - wifi
+      - internet caiu
+      - tem internet
+
+  - id: flush_dns
+    risk: confirm
+    script: flush_dns
+    aliases:
+      - flush dns
+      - limpa dns
+      - limpar dns
+      - ipconfig /flushdns
+
+  - id: empty_recycle_bin
+    risk: confirm
+    script: empty_recycle_bin
+    aliases:
+      - esvazia a lixeira
+      - esvaziar lixeira
+      - limpa a lixeira
+
+  - id: lock_pc
+    risk: safe
+    script: lock_pc
+    aliases:
+      - bloqueia o pc
+      - trava o pc
+      - bloqueia a tela
+      - lock
+      - win+l
+
+  - id: sleep_pc
+    risk: confirm
+    script: sleep_pc
+    aliases:
+      - sleep
+      - suspende
+      - hiberna
+      - põe pra dormir
+      - por pra dormir
+
+  - id: shutdown_pc
+    risk: confirm
+    script: shutdown_pc
+    aliases:
+      - desliga o pc
+      - desligar o pc
+      - desliga o computador
+      - shutdown
+
+  - id: restart_pc
+    risk: confirm
+    script: restart_pc
+    aliases:
+      - reinicia
+      - reiniciar
+      - restart
+      - reboot
+      - reinicia o windows
+      - reinicia o pc
+
+  - id: screenshot
+    risk: safe
+    script: screenshot
+    aliases:
+      - print
+      - print screen
+      - captura a tela
+      - tira um print
+      - screenshot
+
+  - id: nvidia_status
+    risk: safe
+    script: nvidia_status
+    aliases:
+      - vram
+      - uso da gpu
+      - nvidia-smi
+      - status da gpu
+      - quanto a 5070 está usando
+
+  - id: list_dir
+    risk: safe
+    script: list_dir
+    aliases:
+      - lista a pasta
+      - listar pasta
+      - o que tem em
+      - ls
+      - dir
+    needs_slot: path
+
+  - id: open_path
+    risk: safe
+    script: open_path
+    aliases:
+      - abre o arquivo
+      - abre a pasta
+      - abrir arquivo
+    needs_slot: path
+
+  - id: search_files
+    risk: safe
+    script: search_files
+    aliases:
+      - procura arquivo
+      - procurar arquivo
+      - achar arquivo
+      - find file
+      - onde está o arquivo
+    needs_slot: query
+
+  - id: new_folder
+    risk: safe
+    script: new_folder
+    aliases:
+      - cria pasta
+      - criar pasta
+      - nova pasta
+    needs_slot: path
+
+  - id: copy_path
+    risk: confirm
+    script: copy_path
+    aliases:
+      - copia arquivo
+      - copiar arquivo
+      - copy file
+    needs_slot: src
+
+  - id: move_path
+    risk: confirm
+    script: move_path
+    aliases:
+      - move arquivo
+      - mover arquivo
+      - move a pasta
+    needs_slot: src
+
+  - id: delete_path
+    risk: confirm
+    script: delete_path
+    aliases:
+      - apaga
+      - deletar
+      - excluir arquivo
+      - apagar arquivo
+    needs_slot: path
+
+  - id: clipboard_get
+    risk: safe
+    script: clipboard_get
+    aliases:
+      - o que está copiado
+      - lê clipboard
+      - ler área de transferência
+      - o que tem no ctrl c
+
+  - id: clipboard_set
+    risk: safe
+    script: clipboard_set
+    aliases:
+      - copia esse texto
+      - copia pro clipboard
+      - copia isso
+    needs_slot: text
+
+  - id: type_text
+    risk: confirm
+    script: type_text
+    aliases:
+      - digita isso
+      - escreve na janela
+      - type
+    needs_slot: text
+
+  - id: send_hotkey
+    risk: confirm
+    script: send_hotkey
+    aliases:
+      - aperta
+      - atalho
+      - send key
+    needs_slot: keys
+
+  - id: git_status
+    risk: safe
+    script: git_status
+    aliases:
+      - git status
+      - estado do repo
+      - status do git
+
+  - id: git_diff
+    risk: safe
+    script: git_diff
+    aliases:
+      - git diff
+      - diff do repo
+
+  - id: git_commit
+    risk: confirm
+    script: git_commit
+    aliases:
+      - commita
+      - git commit
+      - faz o commit
+
+  - id: run_command
+    risk: confirm
+    script: run_command
+    aliases:
+      - roda o comando
+      - executa o comando
+      - run command
+    needs_slot: command
+
+  - id: install_app
+    risk: confirm
+    script: install_app
+    aliases:
+      - instala
+      - instalar
+      - winget install
+    needs_slot: package
+
+  - id: python_run
+    risk: confirm
+    script: python_run
+    aliases:
+      - roda o python
+      - executa o script python
+    needs_slot: path
+
+  - id: create_task
+    risk: confirm
+    script: create_task
+    aliases:
+      - agenda tarefa
+      - cria tarefa agendada
+      - task scheduler
+
+  - id: organize_downloads
+    risk: confirm
+    script: organize_downloads
+    aliases:
+      - organiza downloads
+      - organizar downloads
+      - limpa a pasta downloads
+
+  - id: remember_pref
+    risk: safe
+    script: remember_pref
+    aliases:
+      - meu browser padrão é
+      - prefere usar
+      - daqui pra frente usa
+    needs_slot: pref
+
+  - id: observe
+    risk: safe
+    script: observe
+    aliases:
+      - status do sistema
+      - o que está acontecendo no pc
+      - status do pc
+      - como está a máquina
+
+  - id: help_intents
+    risk: safe
+    script: help_intents
+    aliases:
+      - o que você pode fazer
+      - lista comandos
+      - ajuda
+      - help
+      - comandos disponíveis

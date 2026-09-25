@@ -1,192 +1,159 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { EFFORT_INFO, type EffortLevel } from "./effort";
+import { BITNET_MODEL_PREFIX, OLLAMA_MODEL_PREFIX } from "./localCatalog";
 import { createOfflineQAReply, isQAOffline } from "./qaMode";
 
 export interface AIMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  /** Imagens em base64 (sem `data:`), lidas por modelos com visão. */
+  images?: string[];
 }
 
 export interface AIReply {
   text: string;
   source: string;
+  thinking?: string;
+  tokensPerSecond?: number;
+  /** Tokens gerados na resposta (sem contar o prompt). */
+  tokens?: number;
+  /** Tokens gastos no raciocínio, contados pelo backend. */
+  thinkingTokens?: number;
+  cancelled?: boolean;
 }
 
-export async function getOllamaModels(): Promise<string[]> {
-  if (isQAOffline()) return [];
-  try {
-    const res = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1500) });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.models || []).map((m: { name: string }) => m.name);
-  } catch {
-    return [];
-  }
+export interface AIDelta {
+  content: string;
+  thinking: string;
+  thinkingTokens?: number;
 }
 
-export async function askAI(modelName: string, messages: AIMessage[]): Promise<AIReply> {
+export interface AskOptions {
+  requestId?: string;
+  /** Ativa o raciocínio em modelos que suportam `think` no Ollama. */
+  think?: boolean;
+  /** Nível do slider de esforço; tem prioridade sobre `think`. */
+  effort?: EffortLevel;
+  onDelta?: (delta: AIDelta) => void;
+}
+
+interface OllamaChatResult {
+  model: string;
+  content: string;
+  thinking: string;
+  cancelled: boolean;
+  tokensPerSecond?: number | null;
+  evalCount?: number | null;
+  thinkingTokens?: number | null;
+}
+
+interface OllamaChatDelta extends AIDelta {
+  requestId: string;
+}
+
+export const NO_LOCAL_MODEL_ERROR = "Nenhum modelo local selecionado. Baixe um modelo em Configurações › Modelos locais ou escolha um modelo instalado em + › Modelo de IA.";
+
+const SYSTEM_PROMPT = "Você é o Open Assistant, um assistente pessoal que roda localmente no computador Windows do usuário. Responda no idioma do usuário (por padrão, português do Brasil), de forma clara, direta e útil.";
+
+export function ollamaModelId(model: string): string | undefined {
+  if (!model.startsWith(OLLAMA_MODEL_PREFIX)) return undefined;
+  return model.slice(OLLAMA_MODEL_PREFIX.length).trim() || undefined;
+}
+
+/**
+ * Envia a conversa ao Ollama local pelo backend. Não há fallback para nuvem nem
+ * resposta simulada: qualquer falha do Ollama é repassada ao chat.
+ */
+export function systemPromptFor(effort?: EffortLevel): string {
+  const instruction = effort ? EFFORT_INFO[effort].instruction : undefined;
+  return instruction ? `${SYSTEM_PROMPT} ${instruction}` : SYSTEM_PROMPT;
+}
+
+const qaCancelled = new Set<string>();
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Prévia QA no navegador: simula raciocínio e streaming sem tocar no Ollama. */
+async function simulateQAReply(model: string, messages: AIMessage[], requestId: string, options: AskOptions): Promise<AIReply> {
   const lastUserMsg = [...messages].reverse().find((m) => m.role === "user")?.content || "";
-  if (isQAOffline()) return createOfflineQAReply(lastUserMsg, modelName);
-  const normalizedModel = modelName.toLowerCase();
-
-  // 1. Try local Ollama if applicable or if model is set to local
-  const isLocalRequested = normalizedModel.includes("local") || normalizedModel.includes("ollama") || normalizedModel.includes("qwen") || normalizedModel.includes("llama");
-
-  try {
-    const localModels = await getOllamaModels();
-    if (localModels.length > 0 && (isLocalRequested || !normalizedModel.includes("gpt") && !normalizedModel.includes("claude"))) {
-      const targetModel = localModels.find((m) => normalizedModel.includes(m.toLowerCase())) || localModels[0];
-      const ollamaRes = await fetch("http://127.0.0.1:11434/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: targetModel,
-          messages: messages.map((m) => ({ role: m.role, content: m.content })),
-          stream: false,
-        }),
-        signal: AbortSignal.timeout(60000),
-      });
-
-      if (ollamaRes.ok) {
-        const data = await ollamaRes.json();
-        if (data.message?.content) {
-          return { text: data.message.content.trim(), source: `Ollama (${targetModel})` };
-        }
-      }
+  const reply = createOfflineQAReply(lastUserMsg, model);
+  const think = options.effort ? EFFORT_INFO[options.effort].think : options.think;
+  let thinking = "";
+  let thinkingTokens = 0;
+  if (think) {
+    const words = "Vou entender o pedido, separar as partes principais, conferir o contexto do projeto e montar uma resposta curta e verificável.".split(" ");
+    for (const word of words) {
+      if (qaCancelled.delete(requestId)) return { ...reply, thinking, thinkingTokens, cancelled: true };
+      await wait(110);
+      thinking += `${word} `;
+      thinkingTokens += 1;
+      options.onDelta?.({ content: "", thinking: `${word} `, thinkingTokens: 1 });
     }
-  } catch {
-    // Ollama not reachable or timed out, proceed to cloud providers
+  } else {
+    await wait(700);
   }
-
-  // 2. Try Cloud Providers with Windows Credential Manager
-  try {
-    if (normalizedModel.includes("gpt") || normalizedModel.includes("openai")) {
-      const key = await invoke<string | null>("read_credential", { account: "openai" });
-      if (key) {
-        const res = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: messages.map((m) => ({ role: m.role, content: m.content })),
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const text = data.choices?.[0]?.message?.content;
-          if (text) return { text, source: "OpenAI (GPT-4o)" };
-        }
-      }
-    }
-
-    if (normalizedModel.includes("claude") || normalizedModel.includes("anthropic")) {
-      const key = await invoke<string | null>("read_credential", { account: "anthropic" });
-      if (key) {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": key,
-            "anthropic-version": "2023-06-01",
-            "anthropic-dangerous-direct-browser-access": "true",
-          },
-          body: JSON.stringify({
-            model: "claude-3-5-sonnet-20241022",
-            max_tokens: 2048,
-            messages: messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role, content: m.content })),
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const text = data.content?.[0]?.text;
-          if (text) return { text, source: "Anthropic (Claude 3.5 Sonnet)" };
-        }
-      }
-    }
-
-    if (normalizedModel.includes("deepseek")) {
-      const key = await invoke<string | null>("read_credential", { account: "deepseek" });
-      if (key) {
-        const res = await fetch("https://api.deepseek.com/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-          body: JSON.stringify({
-            model: "deepseek-chat",
-            messages: messages.map((m) => ({ role: m.role, content: m.content })),
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const text = data.choices?.[0]?.message?.content;
-          if (text) return { text, source: "DeepSeek Chat" };
-        }
-      }
-    }
-  } catch {
-    // Cloud provider fetch error
+  for (const piece of reply.text.match(/.{1,6}/gs) ?? []) {
+    if (qaCancelled.delete(requestId)) return { ...reply, thinking: thinking.trim() || undefined, thinkingTokens, cancelled: true };
+    await wait(28);
+    options.onDelta?.({ content: piece, thinking: "" });
   }
-
-  // 3. Fallback Built-in Assistant Response
-  return {
-    text: generateContextualReply(lastUserMsg, modelName),
-    source: "Open Assistant Core (Local)",
-  };
+  return { ...reply, thinking: thinking.trim() || undefined, thinkingTokens };
 }
 
-function generateContextualReply(prompt: string, model: string): string {
-  const p = prompt.toLowerCase();
+export async function askAI(model: string, messages: AIMessage[], options: AskOptions = {}): Promise<AIReply> {
+  const requestId = options.requestId ?? crypto.randomUUID();
+  if (isQAOffline()) return simulateQAReply(model, messages, requestId, options);
+  if (model.startsWith(BITNET_MODEL_PREFIX)) return askBitnet(messages, requestId, options);
+  const modelId = ollamaModelId(model);
+  if (!modelId) throw new Error(NO_LOCAL_MODEL_ERROR);
+  const effort = options.effort ? EFFORT_INFO[options.effort] : undefined;
 
-  if (p.includes("olá") || p.includes("ola") || p.includes("oi") || p.includes("bom dia") || p.includes("boa tarde") || p.includes("boa noite")) {
-    return `Olá! Bem-vindo ao Open Assistant no Windows.
-
-Estou pronto para ajudar com:
-• **Planejamento e código:** criação de scripts, automações em PowerShell e desenvolvimento.
-• **Agentes e Workflows:** orquestração visual de agentes e nós no canvas.
-• **Terminal Integrado:** comandos locais com segurança.
-
-💡 *Dica de Modelos:* O Ollama foi detectado no seu sistema! Para executar modelos locais como Llama 3 ou Qwen, abra **Configurações > Runtimes locais** e clique em **Iniciar**, ou adicione sua chave de API em **Configurações > Provedores**.`;
+  const stopListening = await listen<OllamaChatDelta>("ollama-chat-delta", (event) => {
+    if (event.payload.requestId === requestId) options.onDelta?.(event.payload);
+  });
+  try {
+    const result = await invoke<OllamaChatResult>("ollama_chat", {
+      requestId,
+      model: modelId,
+      messages: [{ role: "system", content: systemPromptFor(options.effort) }, ...messages],
+      think: effort?.think ?? options.think ?? false,
+      thinkLevel: effort?.think ? effort.thinkLevel : undefined,
+    });
+    return {
+      text: result.content.trim(),
+      thinking: result.thinking.trim() || undefined,
+      source: `Ollama (${result.model})`,
+      tokensPerSecond: result.tokensPerSecond ?? undefined,
+      tokens: result.evalCount ?? undefined,
+      thinkingTokens: result.thinkingTokens ?? undefined,
+      cancelled: result.cancelled,
+    };
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  } finally {
+    stopListening();
   }
+}
 
-  if (p.includes("plano") || p.includes("implementar") || p.includes("projeto") || p.includes("fazer")) {
-    return `Aqui está uma proposta de plano de ação estruturado:
-
-1. **Definição de Escopo:**
-   - Identificar os requisitos principais e dependências.
-   - Configurar variáveis de ambiente e ferramentas necessárias.
-
-2. **Desenvolvimento e Automação:**
-   - Executar comandos de validação no Terminal integrado (PowerShell).
-   - Conectar os nós no canvas de Workflows para encadear tarefas.
-
-3. **Validação e Entrega:**
-   - Testar o fluxo completo de ponta a ponta.
-   - Registrar as conclusões e artefatos gerados.
-
-Deseja que eu detalhe alguma destas etapas ou prepare os comandos no terminal?`;
+/** Microsoft BitNet no bitnet.cpp: mesmo evento de streaming e mesmo cancelamento do Ollama. */
+async function askBitnet(messages: AIMessage[], requestId: string, options: AskOptions): Promise<AIReply> {
+  const stopListening = await listen<OllamaChatDelta>("ollama-chat-delta", (event) => {
+    if (event.payload.requestId === requestId) options.onDelta?.(event.payload);
+  });
+  try {
+    const result = await invoke<OllamaChatResult>("bitnet_chat", {
+      requestId,
+      messages: [{ role: "system", content: systemPromptFor(options.effort) }, ...messages],
+    });
+    return { text: result.content.trim(), source: "BitNet (bitnet.cpp)", tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  } finally {
+    stopListening();
   }
+}
 
-  if (p.includes("terminal") || p.includes("powershell") || p.includes("cmd") || p.includes("comando")) {
-    return `Você pode alternar para o painel de **Terminal** ou usar o seletor de visualização na barra superior.
-
-Alguns comandos úteis no Windows:
-\`\`\`powershell
-# Verificar informações do sistema
-Get-ComputerInfo | Select-Object WindowsProductName, OsArchitecture
-
-# Listar processos em execução
-Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
-
-# Testar conexão local com Ollama
-Test-NetConnection -ComputerName 127.0.0.1 -Port 11434
-\`\`\`
-
-O terminal integrado possui suporte nativo a UTF-8 e sessões em PowerShell ou Command Prompt.`;
-  }
-
-  return `Recebi sua solicitação: "${prompt}"
-
-Como o modelo selecionado é **${model}**, para obter inferência neural completa em tempo real você pode:
-1. **Ativar o Ollama local:** vá em **Configurações > Runtimes locais** e clique em **Iniciar**.
-2. **Conectar uma chave de nuvem:** adicione sua chave OpenAI, Anthropic ou DeepSeek em **Configurações > Provedores** (as chaves ficam seguras no Gerenciador de Credenciais do Windows).
-
-Enquanto isso, você pode utilizar todos os recursos locais do app: o **Terminal PowerShell/CMD**, o **Canvas de Workflows**, a **Gestão de Agentes** e a alternância de painéis divididos.`;
+export function cancelAI(requestId: string): Promise<void> {
+  if (isQAOffline()) { qaCancelled.add(requestId); return Promise.resolve(); }
+  return invoke<void>("ollama_cancel_chat", { requestId }).catch(() => undefined);
 }

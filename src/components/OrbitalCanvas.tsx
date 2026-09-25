@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { getOrbitalMotion, simulatedAudioLevel, type OrbitalSkin, type OrbitalState } from "../utils/orbitalState";
+import { getOrbitalMotion, simulatedAudioLevel, type OrbitalState, type ParticleSkin } from "../utils/orbitalState";
 
 export interface OrbitalCanvasProps {
-  skin: OrbitalSkin;
+  skin: ParticleSkin;
   state: OrbitalState;
   audioLevel?: number;
   reducedMotion?: boolean;
@@ -59,7 +59,7 @@ function createProgram(gl: WebGL2RenderingContext) {
   return program;
 }
 
-function particlesFor(skin: OrbitalSkin, state: OrbitalState, audioLevel: number, time: number, reducedMotion: boolean): Particle[] {
+function particlesFor(skin: ParticleSkin, state: OrbitalState, audioLevel: number, time: number, reducedMotion: boolean): Particle[] {
   const motion = getOrbitalMotion(skin, state, audioLevel);
   const t = reducedMotion ? 0 : time * motion.speed;
   const points: Particle[] = [];
