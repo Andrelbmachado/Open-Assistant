@@ -281,7 +281,7 @@
 /* Indicador "pensando": Pac-Man virado para a direita comendo três bolinhas que vêm até ele. */
 .pacman-loader { position: relative; display: inline-block; flex: none; width: 50px; height: 16px; align-self: center; }
 .pacman { position: absolute; left: 0; top: 0; width: 16px; height: 16px; z-index: 1; }
-.pacman::before, .pacman::after { content: ""; position: absolute; left: 0; width: 16px; height: 8px; background: #ffd43b; }
+.pacman::before, .pacman::after { content: ""; position: absolute; left: 0; width: 16px; height: 8px; background: #fff; }
 .pacman::before { top: 0; border-radius: 8px 8px 0 0; transform-origin: 50% 100%; animation: pac-jaw-top .3s ease-in-out infinite alternate; }
 .pacman::after { bottom: 0; border-radius: 0 0 8px 8px; transform-origin: 50% 0; animation: pac-jaw-bottom .3s ease-in-out infinite alternate; }
 @keyframes pac-jaw-top { from { transform: rotate(-38deg); } to { transform: rotate(0); } }
@@ -342,3 +342,24 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 /* Botões com texto na barra do compositor: o `width: 30px; display: grid` dos ícones empilhava o texto. */
 .apple-composer-toolbar .agent-toggle, .apple-composer-toolbar .project-context { display: inline-flex; align-items: center; width: auto !important; height: 30px; white-space: nowrap; }
 .apple-composer-toolbar .agent-toggle.active { background: rgba(124, 92, 255, .16) !important; }
+
+/* Rodada 2026-09-25 (2) ------------------------------------------------------------ */
+.effort-head { justify-content: space-between; }
+.effort-name { margin-left: auto; }
+
+/* Itens ativos da barra lateral: azul-marinho mais claro que a moldura, em vez do cinza. */
+.primary-nav button.active, .recent-list button.active { background: #283047; color: #fff; font-weight: 600; }
+.primary-nav button.active svg, .recent-list button.active svg { color: #9cc2ff; }
+.primary-nav button:not(.active):hover, .recent-list button:not(.active):hover { background: rgba(255, 255, 255, .05); color: var(--text); }
+
+/* Botão de trocar o tipo de área: só o botão, sem a caixa larga atrás. */
+.area-controls { min-width: 0; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.area-view-trigger { background: transparent; border-color: transparent; }
+.area-view-trigger:hover, .area-controls.open .area-view-trigger { background: rgba(255, 255, 255, .07); }
+.access-scale { display: flex; justify-content: space-between; color: #8a8a92; font-size: 10px; }
+/* Modelos em nuvem sem chave: inativos, mas clicáveis (levam às Configurações). */
+.quick-submenu .model-mode-row.cloud-locked { opacity: .5; }
+.quick-submenu .model-mode-row.cloud-locked:hover { opacity: .8; }
+/* Rosto do assistente sem caixa atrás, tanto no modo fala quanto na prévia. */
+.face-preview-stage { background: transparent !important; border-color: transparent !important; box-shadow: none !important; }
+.voice-stage .orbital-canvas { background: transparent; }

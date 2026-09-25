@@ -16,6 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 mod agent;
 mod bitnet;
+mod cloud;
 mod computer;
 mod mcp;
 mod speech;
@@ -301,6 +302,12 @@ fn read_credential(
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(error) => Err(format!("falha ao ler credencial: {error}")),
     }
+}
+
+/// Diz se há chave salva sem devolvê-la (o seletor de modelos só precisa saber se existe).
+#[tauri::command]
+fn has_credential(app: AppHandle, state: State<AppState>, account: String) -> bool {
+    read_credential(app, state, account).ok().flatten().is_some_and(|secret| !secret.trim().is_empty())
 }
 
 /// Apaga uma chave salva.
@@ -1194,6 +1201,38 @@ async fn ollama_chat(
     result?
 }
 
+/// Conversa com um modelo em nuvem (chave no Gerenciador de Credenciais); cancela por `ollama_cancel_chat`.
+#[tauri::command]
+async fn cloud_chat(
+    app: AppHandle,
+    request_id: String,
+    provider_id: String,
+    model: String,
+    base_url: Option<String>,
+    messages: Vec<ChatMessageInput>,
+) -> Result<OllamaChatResult, String> {
+    if is_qa_app(&app) {
+        return Err("Modo QA offline: provedores em nuvem não são acessados.".into());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    app.state::<AppState>()
+        .ollama_chats
+        .lock()
+        .map_err(|_| "estado do chat indisponível")?
+        .insert(request_id.clone(), cancel.clone());
+    let worker_app = app.clone();
+    let worker_request = request_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        cloud::run_chat(&worker_app, &worker_request, &provider_id, &model, base_url.as_deref(), &messages, &cancel)
+    })
+    .await
+    .map_err(|error| error.to_string());
+    if let Ok(mut chats) = app.state::<AppState>().ollama_chats.lock() {
+        chats.remove(&request_id);
+    }
+    result?
+}
+
 /// Conversa com o Microsoft BitNet (bitnet.cpp); cancela pelo mesmo `ollama_cancel_chat`.
 #[tauri::command]
 async fn bitnet_chat(
@@ -1476,6 +1515,7 @@ pub fn run() {
             save_credential,
             read_credential,
             delete_credential,
+            has_credential,
             check_local_runtime_status,
             start_runtime,
             scan_hardware,
@@ -1487,6 +1527,7 @@ pub fn run() {
             ollama_chat,
             ollama_cancel_chat,
             bitnet_chat,
+            cloud_chat,
             tools::tools_status,
             tools::tool_install,
             tools::tool_cancel,

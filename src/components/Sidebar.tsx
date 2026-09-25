@@ -28,9 +28,10 @@ export function Sidebar() {
         <button className="sidebar-search" onClick={() => dispatch({ type: "palette", open: true })}><Search size={15} /><span>Buscar</span><kbd>Ctrl P</kbd></button>
         <nav className="primary-nav" aria-label="Seções">
           {sections.map(({ id, title, icon: Icon, action }) => {
-            const active = action === "chat" ? state.activeView === "chat" : action === "view" && state.activeView === id;
+            // "Novo Chat" é uma ação, não um lugar: não fica marcado (a conversa aberta já fica).
+            const active = action === "view" && state.activeView === id;
             return <button key={title} className={active ? "active" : ""} onClick={() => action === "chat" ? dispatch({ type: "newChat" }) : dispatch({ type: "view", view: id! })} title={title}>
-              <Icon size={17} /><span>{title}</span>{active && <i />}
+              <Icon size={17} /><span>{title}</span>
             </button>;
           })}
         </nav>

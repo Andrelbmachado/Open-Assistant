@@ -1,8 +1,11 @@
 import { BITNET_MODEL_PREFIX, LOCAL_MODEL_CATALOG, OLLAMA_MODEL_PREFIX } from "./localCatalog";
+import { cloudDisplayName } from "./cloudModels";
 
 /** Nome exibido no título das respostas: o rótulo do catálogo ou o id do Ollama. */
 export function modelDisplayName(model: string | undefined, source?: string): string {
   if (model?.startsWith(BITNET_MODEL_PREFIX) || source?.startsWith("BitNet")) return "BitNet b1.58 2B4T";
+  const cloud = model ? cloudDisplayName(model) : undefined;
+  if (cloud) return cloud;
   const id = model?.startsWith(OLLAMA_MODEL_PREFIX) ? model.slice(OLLAMA_MODEL_PREFIX.length).trim() : model?.trim() || source?.match(/\(([^)]+)\)/)?.[1]?.trim();
   if (!id) return "Open Assistant";
   return LOCAL_MODEL_CATALOG.find((item) => item.id.toLowerCase() === id.toLowerCase())?.label ?? id;

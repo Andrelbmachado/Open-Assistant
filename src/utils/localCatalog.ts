@@ -129,8 +129,8 @@ export function buildLocalModelOptions(hardware: HardwareProfile | undefined, in
 
 /** Resolve qual modelo Ollama o chat deve usar, sem nunca cair para nuvem. */
 export function resolveChatModel(chatModel: string, installedIds: string[], preferred: string | undefined): string | undefined {
-  if (isLocalChatModel(chatModel)) return chatModel;
-  if (preferred?.startsWith(BITNET_MODEL_PREFIX)) return preferred;
+  if (chatModel.startsWith("Nuvem: ") || isLocalChatModel(chatModel)) return chatModel;
+  if (preferred?.startsWith(BITNET_MODEL_PREFIX) || preferred?.startsWith("Nuvem: ")) return preferred;
   // Lista vazia = Ollama desligado ou ainda sem resposta: mantém a escolha para o erro real aparecer.
   if (preferred?.startsWith(OLLAMA_MODEL_PREFIX) && (!installedIds.length || installedIds.includes(preferred.slice(OLLAMA_MODEL_PREFIX.length)))) return preferred;
   return installedIds[0] ? `${OLLAMA_MODEL_PREFIX}${installedIds[0]}` : undefined;

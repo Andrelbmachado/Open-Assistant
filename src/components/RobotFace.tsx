@@ -141,8 +141,11 @@ void main() {
 
   vec3 col = (sphere + screen * (1. - feature) + features + featGlow) * inside;
   float outer = max(ds - 1., 0.);
-  col += (rimCol * exp(-outer * 14.) * .28 + tint * exp(-outer * 6.) * .06) * u_glow * (1. - inside);
-  col += particles(uv);
+  // Tudo que fica fora da esfera some antes da borda do canvas: sem isso o brilho fraco
+  // deixava um quadrado visível atrás do robô.
+  float edgeFade = smoothstep(0., .22, 1. - max(abs(uv.x), abs(uv.y)));
+  col += (rimCol * exp(-outer * 14.) * .28 + tint * exp(-outer * 6.) * .06) * u_glow * (1. - inside) * edgeFade;
+  col += particles(uv) * edgeFade;
   col = tone(col);
   outColor = vec4(col, max(inside, max(col.r, max(col.g, col.b))));
 }`;

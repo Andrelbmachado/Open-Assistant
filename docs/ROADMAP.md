@@ -46,6 +46,15 @@
 - [x] Exe copiado para `Desktop\Assistente pessoal\Open Assistant.exe` (antigo em `_versoes-anteriores`)
 - [x] Commit + push de `feat/agente-local`
 
+## 7. Ajustes visuais (rodada 2) — concluído
+- [x] Pac-Man branco; robô sem quadrado (brilho some antes da borda do canvas) e prévia sem caixa
+- [x] Esforço: só "Mais rápido / Mais inteligente", sem ícone de info, nível à direita
+- [x] Acesso ao computador = um slider (mínimo Somente leitura, meio Perguntar, máximo Automático)
+- [x] Modelos em nuvem no seletor (ChatGPT, Claude, DeepSeek, Perplexity, Together, Fireworks + customizados); sem chave → inativo e leva a Provedores com aviso; com chave → `cloud_chat` no Rust
+- [x] Barra lateral: sem barra branca, "Novo Chat" não fica marcado, item ativo em azul-marinho
+- [x] Botão de trocar tipo de área sem a caixa larga atrás
+- [x] Conversas nomeadas pela 1ª pergunta (refinado pelo modelo local); conversa vazia abandonada é apagada
+
 ## Resultados verificados (2026-09-25)
 - Agente com qwen3.5:9b: "abre o chrome, clica na URL, digita g1.globo.com, enter e diz a manchete" → 4 passos, 11 s, manchete correta.
 - Calculadora: abriu, clicou nos botões pelos elementos de UI Automation, visor confirmado "12 × 8 = 96".
@@ -62,6 +71,7 @@
 - Agente: permitir escolher um modelo só para o agente (ex.: qwen2.5vl para visão) diferente do chat
 - MCP: transporte HTTP/SSE (hoje só stdio); não travar a lista enquanto uma chamada longa roda
 - Playwright MCP e Windows-MCP ainda não foram testados de ponta a ponta (só o Fetch)
+- Nuvem: chamadas reais a OpenAI/Anthropic não foram testadas (não há chave salva); modelo padrão de cada provedor fixo em `cloudModels.ts`
 
 ## Notas
 - Voz: ver `src-tauri/src/speech.rs`; runtime baixada em `%LOCALAPPDATA%\com.openassistant.windows\tools`.

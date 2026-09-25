@@ -1,4 +1,4 @@
-import { ArrowUp, AudioLines, Ban, Bot, Check, ChevronRight, CircleAlert, CircleCheck, CircleX, Copy, Cpu, Download, FileText, Folder, Image, LoaderCircle, Mic, MousePointer2, Play, Plus, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
+import { ArrowUp, AudioLines, Ban, Bot, Check, ChevronRight, KeyRound, Cloud, CircleAlert, CircleCheck, CircleX, Copy, Cpu, Download, FileText, Folder, Image, LoaderCircle, Mic, MousePointer2, Play, Plus, ShieldCheck, Sparkles, Square, Volume2, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../store/store";
 import { refreshInstalledModels, scanHardware, startOllama, useLocalModels } from "../store/localModelsStore";
@@ -7,6 +7,9 @@ import { refreshTools, useTools } from "../store/toolsStore";
 import { resolveAsrModel, resolveTtsVoice } from "../utils/toolCatalog";
 import { VoiceCapture, type CaptureResult } from "../utils/voiceCapture";
 import { runAgent, type AccessMode, type AgentStep } from "../utils/agentRunner";
+import { invoke } from "@tauri-apps/api/core";
+import { allCloudProviders, CLOUD_PRODUCT_NAMES, cloudModelValue } from "../utils/cloudModels";
+import { cleanModelTitle, titlePrompt } from "../utils/chatTitle";
 import { askAI, cancelAI, NO_LOCAL_MODEL_ERROR, ollamaModelId } from "../utils/aiService";
 import { AssistantFace } from "./AssistantFace";
 import { EffortControl } from "./EffortControl";
@@ -24,6 +27,9 @@ import { detectSpeechExpression, type RobotExpression } from "../utils/robotExpr
 
 const speech = new SpeechController();
 type ApprovalMode = AccessMode;
+/** Slider de acesso: mínimo = só leitura, meio = pergunta antes de agir, máximo = age sozinho. */
+const ACCESS_STEPS: ApprovalMode[] = ["Somente leitura", "Perguntar", "Automático"];
+const ACCESS_LABELS: Record<ApprovalMode, string> = { "Somente leitura": "Somente leitura", Perguntar: "Pergunta antes de agir", "Automático": "Total (age sozinho)" };
 type ConfirmAnswer = "allow" | "always" | "deny";
 
 /** Passo do agente como linha do chat: ícone de estado + rótulo + saída recolhível. */
@@ -89,7 +95,6 @@ export function ChatView() {
   const [reducedMotion, setReducedMotion] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [activePopover, setActivePopover] = useState<ComposerPopover | null>(null);
-  const [approvalOpen, setApprovalOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [contextProject, setContextProject] = useState("Open Assistant");
@@ -97,7 +102,8 @@ export function ChatView() {
   const setApproval = (access: ApprovalMode) => dispatch({ type: "setAccess", access });
   const [confirmRequest, setConfirmRequest] = useState<{ step: AgentStep; resolve: (answer: ConfirmAnswer) => void }>();
   const agentCancel = useRef(false);
-  const [accessLevel, setAccessLevel] = useState(100);
+  /** Provedores em nuvem com chave salva (só o "tem ou não"; a chave fica no Rust). */
+  const [cloudKeys, setCloudKeys] = useState<Record<string, boolean>>({});
   const [expression, setExpression] = useState<RobotExpression>("idle");
   const [stageVisible, setStageVisible] = useState(false);
   const [lastGeneration, setLastGeneration] = useState<GenerationMetric>();
@@ -155,7 +161,7 @@ export function ChatView() {
       if (composerRef.current?.contains(event.target as Node)) return;
       setActivePopover(null);
       setModelMenuOpen(false);
-      setApprovalOpen(false);
+     
     };
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
@@ -242,6 +248,31 @@ export function ChatView() {
     setActivePopover(null);
   }
 
+  // Ao abrir o seletor de modelos, confere quais provedores em nuvem já têm chave.
+  useEffect(() => {
+    if (!modelMenuOpen || isQAOffline()) return;
+    for (const provider of allCloudProviders()) {
+      invoke<boolean>("has_credential", { account: provider.id }).then((has) => setCloudKeys((keys) => ({ ...keys, [provider.id]: has }))).catch(() => undefined);
+    }
+  }, [modelMenuOpen]);
+
+  /** Depois da primeira resposta, pede ao modelo local um título curto com o assunto (em segundo plano). */
+  function refineTitle(chatId: string, model: string, firstMessage: string) {
+    if (!model.startsWith(OLLAMA_MODEL_PREFIX) || isQAOffline()) return;
+    void askAI(model, [{ role: "user", content: titlePrompt(firstMessage) }], { effort: "fast" })
+      .then((reply) => { const title = cleanModelTitle(reply.text); if (title) dispatch({ type: "renameChat", chatId, title }); })
+      .catch(() => undefined);
+  }
+
+  function cloudRow(provider: { id: string; name: string; defaultModel: string }) {
+    const value = cloudModelValue(provider.id, provider.defaultModel);
+    const hasKey = cloudKeys[provider.id];
+    const active = chatModel === value;
+    const name = <span className="model-row-name"><b>{CLOUD_PRODUCT_NAMES[provider.id] ?? provider.name}</b><code>{provider.defaultModel}</code></span>;
+    if (hasKey) return <button key={provider.id} className={`model-mode-row ${active ? "active" : ""}`} title={`${provider.name} · ${provider.defaultModel}`} onClick={() => { dispatch({ type: "setModel", chatId: chat.id, model: value }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>Nuvem</small>{active ? <Check size={14} /> : <Cloud size={13} />}</button>;
+    return <button key={provider.id} className="model-mode-row cloud-locked" title="Adicione uma chave de API para usar este modelo" onClick={() => { dispatch({ type: "settings", open: true, tab: "providers", focusModel: provider.id, notice: `Adicione uma chave de API da ${provider.name} para usar ${CLOUD_PRODUCT_NAMES[provider.id] ?? provider.name} (${provider.defaultModel}).` }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>Sem chave</small><KeyRound size={13} /></button>;
+  }
+
   function openModelSettings(focusModel?: string) {
     dispatch({ type: "settings", open: true, tab: "models", focusModel });
     setActivePopover(null);
@@ -268,9 +299,10 @@ export function ChatView() {
     const model = resolveChatModel(chat.model, installedIds, state.preferredModel);
     if (model && model !== chat.model) dispatch({ type: "setModel", chatId, model });
 
+    const isFirstQuestion = !chat.messages.some((message) => message.sender === "user");
     dispatch({ type: "addMessage", chatId, message: { id: userMsgId, sender: "user", text, time: "agora" } });
     setDraft(""); setAttachments([]);
-    setActivePopover(null); setModelMenuOpen(false); setApprovalOpen(false);
+    setActivePopover(null); setModelMenuOpen(false);
     followLatest.current = true;
     setOrbitalState(nextOrbitalState("request-start"));
     const startedAt = Date.now();
@@ -311,6 +343,7 @@ export function ChatView() {
         });
         if (result.tokensPerSecond) setLastGeneration({ chatId, model, tokensPerSecond: result.tokensPerSecond });
         dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: result.text, steps: result.steps, loading: false, source: result.source, tokens: result.tokens, tokensPerSecond: result.tokensPerSecond } });
+        if (isFirstQuestion && sourceText) refineTitle(chatId, model, sourceText);
         if (options.speakAfter && result.text) startSpeaking(result.text);
         else setOrbitalState(nextOrbitalState("reset"));
         return;
@@ -331,6 +364,7 @@ export function ChatView() {
       const fallbackText = reply.cancelled ? "Resposta interrompida." : "O modelo não retornou texto.";
       const totalThinkingTokens = reply.thinkingTokens ?? (thinkingTokens || undefined);
       dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: reply.text || fallbackText, thinking: reply.thinking, thinkingTokens: reply.thinking ? totalThinkingTokens : undefined, thinkingMs: reply.thinking ? thinkingMs ?? Date.now() - startedAt : undefined, loading: false, source: reply.cancelled ? `${reply.source} · interrompida` : reply.source, tokensPerSecond, tokens: reply.tokens } });
+      if (isFirstQuestion && sourceText && !reply.cancelled) refineTitle(chatId, model, sourceText);
       if (options.speakAfter && reply.text) startSpeaking(reply.text);
       else setOrbitalState(nextOrbitalState("reset"));
     } catch (err) {
@@ -433,7 +467,7 @@ export function ChatView() {
         event.preventDefault();
         setActivePopover(null);
         setModelMenuOpen(false);
-        setApprovalOpen(false);
+       
         return;
       }
       if (event.key === "Escape" && (listening || orbitalState === "speaking")) {
@@ -450,7 +484,7 @@ export function ChatView() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activePopover, listening, orbitalState, pendingRequest]);
 
-  function chooseFiles() { fileInput.current?.click(); setActivePopover(null); setModelMenuOpen(false); setApprovalOpen(false); }
+  function chooseFiles() { fileInput.current?.click(); setActivePopover(null); setModelMenuOpen(false); }
 
   function chooseProject(name: string) {
     setContextProject(name);
@@ -580,9 +614,9 @@ export function ChatView() {
         <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder={listening ? "Ouvindo… (clique no quadrado para enviar)" : transcribing ? "Transcrevendo…" : state.agentMode ? "Peça uma ação no PC — ex.: abre o chrome e entra no g1" : chatModel ? `Pergunte ao ${ollamaModelId(chatModel) ?? modelDisplayName(chatModel)}` : "Pergunte qualquer coisa"} rows={1} />
         <div className="composer-toolbar apple-composer-toolbar">
           <div className="composer-left-actions">
-            <button className={`composer-plus ${quickMenuOpen ? "active" : ""}`} title="Mais opções" aria-label="Mais opções" aria-expanded={quickMenuOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "quick")); setModelMenuOpen(false); setApprovalOpen(false); }}><Plus size={17} /></button>
+            <button className={`composer-plus ${quickMenuOpen ? "active" : ""}`} title="Mais opções" aria-label="Mais opções" aria-expanded={quickMenuOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "quick")); setModelMenuOpen(false); }}><Plus size={17} /></button>
             {quickMenuOpen && <div className="composer-popover quick-actions-popover">
-              <button onClick={() => { setModelMenuOpen((open) => !open); setApprovalOpen(false); void refreshInstalledModels(); }}><span><Sparkles size={14} />Modelo de IA</span><small>{chatModel ? ollamaModelId(chatModel) : "Nenhum"}<ChevronRight size={14} /></small></button>
+              <button onClick={() => { setModelMenuOpen((open) => !open); void refreshInstalledModels(); }}><span><Sparkles size={14} />Modelo de IA</span><small>{chatModel ? ollamaModelId(chatModel) : "Nenhum"}<ChevronRight size={14} /></small></button>
               {modelMenuOpen && <div className="model-mode-menu quick-submenu model-picker">
                 {local.ollama === "offline" && <button className="model-mode-row ollama-offline" onClick={() => startOllama()} title={local.ollamaError}><span className="model-row-name"><b>Ollama parado</b><code>127.0.0.1:11434</code></span><small>Iniciar</small><Play size={13} /></button>}
                 {local.ollama === "checking" && <small className="local-model-empty">Verificando o Ollama…</small>}
@@ -593,6 +627,8 @@ export function ChatView() {
                 {availableOptions.map(modelRow)}
                 <span className="menu-section-label">Microsoft BitNet · 1 bit</span>
                 {bitnetRow()}
+                <span className="menu-section-label">Nuvem</span>
+                {allCloudProviders().map(cloudRow)}
                 {incompatibleOptions.length > 0 && <span className="menu-section-label">Incompatíveis</span>}
                 {incompatibleOptions.map(modelRow)}
                 <i className="model-mode-divider" />
@@ -600,15 +636,13 @@ export function ChatView() {
               </div>}
               <EffortControl value={state.effort} onChange={(effort) => dispatch({ type: "setEffort", effort })} reducedMotion={reducedMotion} />
               <i className="menu-divider" />
-              <button onClick={() => setApprovalOpen((open) => !open)}><span><ShieldCheck size={14} />Acesso ao computador</span><small>{approval}<ChevronRight size={14} /></small></button>
-              {approvalOpen && <div className="approval-inline">{(["Perguntar", "Automático", "Somente leitura"] as ApprovalMode[]).map((mode) => <button key={mode} onClick={() => { setApproval(mode); setApprovalOpen(false); }}><span>{approval === mode && <Check size={13} />}{mode}</span></button>)}</div>}
-              <label className="access-level-control"><span><strong>Nível de acesso</strong><small>{accessLevel >= 85 ? "Total" : accessLevel >= 45 ? "Limitado" : "Somente leitura"}</small></span><input type="range" min="0" max="100" value={accessLevel} aria-label="Nível de acesso ao computador" onChange={(event) => setAccessLevel(Number(event.target.value))} /></label>
+              <label className="access-level-control"><span><strong>Acesso ao computador</strong><small>{ACCESS_LABELS[approval]}</small></span><input type="range" min="0" max="2" step="1" value={ACCESS_STEPS.indexOf(approval)} aria-label="Nível de acesso ao computador" aria-valuetext={ACCESS_LABELS[approval]} onChange={(event) => setApproval(ACCESS_STEPS[Number(event.target.value)])} /><span className="access-scale"><span>Somente leitura</span><span>Total</span></span></label>
               <i className="menu-divider" />
               <button onClick={chooseFiles}><span><FileText size={14} />Anexar documento</span></button>
               <button onClick={chooseFiles}><span><Image size={14} />Anexar foto</span></button>
             </div>}
             <button className={`agent-toggle ${state.agentMode ? "active" : ""}`} aria-pressed={state.agentMode} title={state.agentMode ? "Controlando o PC: o assistente pode abrir apps, clicar e digitar (com a permissão escolhida em + › Acesso ao computador)" : "Deixar o assistente controlar o PC"} onClick={() => dispatch({ type: "setAgentMode", on: !state.agentMode })}><MousePointer2 size={14} /><span>Controlar o PC</span></button>
-            <button className={`project-context ${projectOpen ? "active" : ""}`} title="Projeto de contexto" aria-expanded={projectOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "project")); setModelMenuOpen(false); setApprovalOpen(false); }}><Folder size={14} /><span>{contextProject}</span></button>
+            <button className={`project-context ${projectOpen ? "active" : ""}`} title="Projeto de contexto" aria-expanded={projectOpen} onClick={() => { setActivePopover(nextComposerPopover(activePopover, "project")); setModelMenuOpen(false); }}><Folder size={14} /><span>{contextProject}</span></button>
             {projectOpen && <div className="composer-popover project-popover">
               <input autoFocus value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="Buscar projetos" aria-label="Buscar projetos" />
               <span className="menu-section-label">Projetos</span>

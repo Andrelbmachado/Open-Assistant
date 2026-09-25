@@ -1,4 +1,3 @@
-import { Info } from "lucide-react";
 import { useEffect, useRef, type CSSProperties } from "react";
 import { EFFORT_INFO, EFFORT_LEVELS, effortAt, effortIndex, type EffortLevel } from "../utils/effort";
 
@@ -64,7 +63,6 @@ export function EffortControl({ value, onChange, reducedMotion = false }: Effort
     <div className="effort-head">
       <span>Esforço</span>
       <b className="effort-name">{info.label}</b>
-      <span className="effort-info" title="Mais esforço ativa o raciocínio do modelo (quando disponível) e pede mais verificação. As respostas ficam melhores, porém mais lentas."><Info size={13} /></span>
     </div>
     <div className="effort-slider" style={{ "--effort": index / last } as CSSProperties}>
       <div className="effort-track">
@@ -75,6 +73,5 @@ export function EffortControl({ value, onChange, reducedMotion = false }: Effort
       <input type="range" min={0} max={last} step={1} value={index} aria-label="Esforço do modelo" aria-valuetext={`${info.label}: ${info.description}`} onChange={(event) => onChange(effortAt(Number(event.target.value)))} />
     </div>
     <div className="effort-scale"><span>Mais rápido</span><span>Mais inteligente</span></div>
-    <small className="effort-description">{info.description}</small>
   </div>;
 }

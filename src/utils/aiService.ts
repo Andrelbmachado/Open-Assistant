@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { EFFORT_INFO, type EffortLevel } from "./effort";
 import { BITNET_MODEL_PREFIX, OLLAMA_MODEL_PREFIX } from "./localCatalog";
+import { allCloudProviders, cloudDisplayName, parseCloudModel } from "./cloudModels";
 import { createOfflineQAReply, isQAOffline } from "./qaMode";
 
 export interface AIMessage {
@@ -107,6 +108,8 @@ export async function askAI(model: string, messages: AIMessage[], options: AskOp
   const requestId = options.requestId ?? crypto.randomUUID();
   if (isQAOffline()) return simulateQAReply(model, messages, requestId, options);
   if (model.startsWith(BITNET_MODEL_PREFIX)) return askBitnet(messages, requestId, options);
+  const cloud = parseCloudModel(model);
+  if (cloud) return askCloud(cloud.providerId, cloud.model, messages, requestId, options);
   const modelId = ollamaModelId(model);
   if (!modelId) throw new Error(NO_LOCAL_MODEL_ERROR);
   const effort = options.effort ? EFFORT_INFO[options.effort] : undefined;
@@ -157,6 +160,25 @@ async function askBitnet(messages: AIMessage[], requestId: string, options: AskO
 }
 
 /** Interrompe a geração em andamento pelo id da requisição. */
+/** Provedor em nuvem pelo Rust (a chave fica no Gerenciador de Credenciais). */
+async function askCloud(providerId: string, model: string, messages: AIMessage[], requestId: string, options: AskOptions): Promise<AIReply> {
+  const baseUrl = allCloudProviders().find((provider) => provider.id === providerId)?.baseUrl;
+  const stopListening = await listen<OllamaChatDelta>("ollama-chat-delta", (event) => {
+    if (event.payload.requestId === requestId) options.onDelta?.(event.payload);
+  });
+  try {
+    const result = await invoke<OllamaChatResult>("cloud_chat", {
+      requestId, providerId, model, baseUrl,
+      messages: [{ role: "system", content: systemPromptFor(options.effort) }, ...messages],
+    });
+    return { text: result.content.trim(), source: cloudDisplayName(`Nuvem: ${providerId}/${model}`) ?? providerId, tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  } finally {
+    stopListening();
+  }
+}
+
 export function cancelAI(requestId: string): Promise<void> {
   if (isQAOffline()) { qaCancelled.add(requestId); return Promise.resolve(); }
   return invoke<void>("ollama_cancel_chat", { requestId }).catch(() => undefined);

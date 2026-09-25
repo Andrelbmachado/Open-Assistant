@@ -3,6 +3,7 @@ import { hasWorkspaceArea, isValidWorkspaceLayout, type ViewKind, type Workspace
 import { DEFAULT_ORBITAL_SKIN, isOrbitalSkin, type OrbitalSkin } from "../utils/orbitalState";
 import { DEFAULT_EFFORT, isEffortLevel, type EffortLevel } from "../utils/effort";
 import type { AccessMode, AgentStep } from "../utils/agentRunner";
+import { NEW_CHAT_TITLE, titleFromMessage } from "../utils/chatTitle";
 
 export type { ViewKind, WorkspaceArea, WorkspaceLayoutNode, WorkspaceSplit } from "../utils/workspaceLayout";
 
@@ -106,6 +107,8 @@ export interface AppState {
   /** Pedido pontual para abrir Configurações numa aba/modelo específico. */
   settingsTab?: SettingsTab;
   settingsFocusModel?: string;
+  /** Aviso mostrado ao abrir Configurações (ex.: "adicione uma chave de API"). */
+  settingsNotice?: string;
   paletteOpen: boolean;
   /** Último modelo local escolhido; usado por conversas novas. */
   preferredModel?: string;
@@ -136,7 +139,8 @@ type Action =
   | { type: "toggleSplit" }
   | { type: "splitRatio"; value: number }
   | { type: "sidebar" }
-  | { type: "settings"; open: boolean; tab?: SettingsTab; focusModel?: string }
+  | { type: "settings"; open: boolean; tab?: SettingsTab; focusModel?: string; notice?: string }
+  | { type: "renameChat"; chatId: string; title: string }
   | { type: "palette"; open: boolean }
   | { type: "theme"; theme: Theme }
   | { type: "accent"; accent: string }
@@ -231,8 +235,6 @@ const initialState: AppState = {
         },
       ],
     },
-    { id: "runtime", title: "Configurar modelos locais", model: "", messages: [] },
-    { id: "design", title: "Revisão do workspace", model: "", messages: [] },
   ],
   projects: [{ id: "open-assistant", name: "Open Assistant" }],
   nodes: [
@@ -265,7 +267,8 @@ function reducer(state: AppState, action: Action): AppState {
     case "toggleSplit": return { ...state, splitEnabled: !state.splitEnabled };
     case "splitRatio": return { ...state, splitRatio: Math.min(0.8, Math.max(0.25, action.value)) };
     case "sidebar": return { ...state, sidebarCollapsed: !state.sidebarCollapsed };
-    case "settings": return { ...state, settingsOpen: action.open, settingsTab: action.open ? action.tab : undefined, settingsFocusModel: action.open ? action.focusModel : undefined };
+    case "settings": return { ...state, settingsOpen: action.open, settingsTab: action.open ? action.tab : undefined, settingsFocusModel: action.open ? action.focusModel : undefined, settingsNotice: action.open ? action.notice : undefined };
+    case "renameChat": return { ...state, chats: state.chats.map((chat) => chat.id === action.chatId ? { ...chat, title: action.title } : chat) };
     case "palette": return { ...state, paletteOpen: action.open };
     case "theme": return { ...state, theme: action.theme };
     case "accent": return { ...state, accent: action.accent };
@@ -327,9 +330,13 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case "newChat": {
       const id = crypto.randomUUID();
-      return { ...state, activeChatId: id, activeView: "chat", workspaceLayout: updateAreaView(state.workspaceLayout, state.activeAreaId, "chat"), chats: [{ id, title: "Nova conversa", model: state.preferredModel ?? "", messages: [], projectId: action.projectId }, ...state.chats] };
+      const chats = withoutEmptyChat(state.chats, state.activeChatId);
+      return { ...state, activeChatId: id, activeView: "chat", workspaceLayout: updateAreaView(state.workspaceLayout, state.activeAreaId, "chat"), chats: [{ id, title: NEW_CHAT_TITLE, model: state.preferredModel ?? "", messages: [], projectId: action.projectId }, ...chats] };
     }
-    case "selectChat": return { ...state, activeChatId: action.id, activeView: "chat", workspaceLayout: updateAreaView(state.workspaceLayout, state.activeAreaId, "chat") };
+    case "selectChat": {
+      const chats = action.id === state.activeChatId ? state.chats : withoutEmptyChat(state.chats, state.activeChatId);
+      return { ...state, chats, activeChatId: action.id, activeView: "chat", workspaceLayout: updateAreaView(state.workspaceLayout, state.activeAreaId, "chat") };
+    }
     case "sendMessage": {
       const message: ChatMessage = { id: crypto.randomUUID(), sender: "user", text: action.text, time: "agora" };
       return { ...state, chats: state.chats.map((chat) => chat.id === state.activeChatId ? { ...chat, messages: [...chat.messages, message] } : chat) };
@@ -337,9 +344,12 @@ function reducer(state: AppState, action: Action): AppState {
     case "addMessage": {
       return {
         ...state,
-        chats: state.chats.map((chat) =>
-          chat.id === action.chatId ? { ...chat, messages: [...chat.messages, action.message] } : chat
-        ),
+        chats: state.chats.map((chat) => {
+          if (chat.id !== action.chatId) return chat;
+          // A primeira pergunta dá nome à conversa (o ChatView refina depois com o modelo local).
+          const firstQuestion = action.message.sender === "user" && chat.title === NEW_CHAT_TITLE && !chat.messages.some((message) => message.sender === "user");
+          return { ...chat, title: firstQuestion ? titleFromMessage(action.message.text) : chat.title, messages: [...chat.messages, action.message] };
+        }),
       };
     }
     case "updateMessage": {
@@ -362,7 +372,7 @@ function reducer(state: AppState, action: Action): AppState {
     case "setModel": {
       return {
         ...state,
-        preferredModel: action.model.startsWith("Ollama: ") || action.model.startsWith("BitNet: ") ? action.model : state.preferredModel,
+        preferredModel: /^(Ollama|BitNet|Nuvem): /.test(action.model) ? action.model : state.preferredModel,
         chats: state.chats.map((chat) =>
           chat.id === action.chatId ? { ...chat, model: action.model } : chat
         ),
@@ -370,6 +380,21 @@ function reducer(state: AppState, action: Action): AppState {
     }
     default: return state;
   }
+}
+
+/** Conversa vazia que o usuário deixou sem usar é apagada para não acumular "Nova conversa". */
+function withoutEmptyChat(chats: Chat[], leavingId: string): Chat[] {
+  return chats.filter((chat) => chat.id !== leavingId || chat.messages.length > 0);
+}
+
+/** Ao abrir o app: some com conversas vazias (exceto a ativa) e nomeia as antigas "Nova conversa". */
+function tidyChats(chats: Chat[], activeId: string): Chat[] {
+  return chats
+    .filter((chat) => chat.messages.length > 0 || chat.id === activeId)
+    .map((chat) => {
+      const first = chat.messages.find((message) => message.sender === "user");
+      return chat.title === NEW_CHAT_TITLE && first ? { ...chat, title: titleFromMessage(first.text) } : chat;
+    });
 }
 
 /** Respostas que estavam sendo geradas quando o app fechou não voltam a "pensar" para sempre. */
@@ -389,7 +414,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const layoutIsCurrent = restored.layoutVersion === fallback.layoutVersion
         && isValidWorkspaceLayout(restored.workspaceLayout)
         && hasWorkspaceArea(restored.workspaceLayout, restored.activeAreaId);
-      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, orbitalSkin: restored.faceVersion === fallback.faceVersion && isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, faceVersion: fallback.faceVersion, effort: isEffortLevel(restored.effort) ? restored.effort : fallback.effort, voice: { ...fallback.voice, ...(restored.voice ?? {}) }, agentMode: restored.agentMode === true, access: ["Perguntar", "Automático", "Somente leitura"].includes(restored.access) ? restored.access : fallback.access, chats: layoutIsCurrent ? settleInterruptedMessages(restored.chats ?? fallback.chats) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, settingsTab: undefined, settingsFocusModel: undefined, paletteOpen: false };
+      return { ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, orbitalSkin: restored.faceVersion === fallback.faceVersion && isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, faceVersion: fallback.faceVersion, effort: isEffortLevel(restored.effort) ? restored.effort : fallback.effort, voice: { ...fallback.voice, ...(restored.voice ?? {}) }, agentMode: restored.agentMode === true, access: ["Perguntar", "Automático", "Somente leitura"].includes(restored.access) ? restored.access : fallback.access, chats: layoutIsCurrent ? tidyChats(settleInterruptedMessages(restored.chats ?? fallback.chats), restored.activeChatId ?? fallback.activeChatId) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, nodes: restored.nodes ?? fallback.nodes, connections: restored.connections ?? fallback.connections, frames: restored.frames ?? fallback.frames, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, settingsTab: undefined, settingsFocusModel: undefined, paletteOpen: false };
     } catch { return fallback; }
   });
 
