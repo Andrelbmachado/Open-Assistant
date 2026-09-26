@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  calculateSplitIntent,
-  hasWorkspaceArea,
-  isValidWorkspaceLayout,
-  type WorkspaceLayoutNode,
-} from "./workspaceLayout";
+import { assignChatAreas, calculateSplitIntent, listAreas, hasWorkspaceArea, isValidWorkspaceLayout, type WorkspaceLayoutNode, adoptWorkflows, assignWorkflowAreas, setAreaWorkflow } from "./workspaceLayout";
 
 describe("calculateSplitIntent", () => {
   it("creates a left horizontal area from a single continuous drag", () => {
@@ -57,5 +52,48 @@ describe("isValidWorkspaceLayout", () => {
     const layout: WorkspaceLayoutNode = { id: "chat-area", view: "chat" };
 
     expect(hasWorkspaceArea(layout, "missing-area")).toBe(false);
+  });
+});
+
+describe("assignChatAreas", () => {
+  const split = (first: WorkspaceLayoutNode, second: WorkspaceLayoutNode): WorkspaceLayoutNode => ({ id: `s-${Math.random()}`, axis: "horizontal", fraction: .5, first, second });
+
+  it("gives a freshly split chat area its own new conversation", () => {
+    let created = 0;
+    const layout = split({ id: "a", view: "chat", chatId: "c1" }, { id: "b", view: "chat" });
+    const next = assignChatAreas(layout, "a", "c1", new Set(["c1"]), () => `novo-${++created}`);
+    expect(listAreas(next).map((area) => area.chatId)).toEqual(["c1", "novo-1"]);
+  });
+
+  it("never shows the same conversation in two areas", () => {
+    const layout = split({ id: "a", view: "chat", chatId: "c1" }, { id: "b", view: "chat", chatId: "c1" });
+    const next = assignChatAreas(layout, "b", "c1", new Set(["c1", "c2"]), () => "novo");
+    expect(listAreas(next).map((area) => area.chatId)).toEqual(["novo", "c1"]);
+  });
+
+  it("makes the active area follow the selected conversation and ignores other views", () => {
+    const layout = split({ id: "a", view: "chat", chatId: "c1" }, { id: "b", view: "workflow" });
+    const next = assignChatAreas(layout, "a", "c2", new Set(["c1", "c2"]), () => "novo");
+    expect(listAreas(next)).toEqual([{ id: "a", view: "chat", chatId: "c2" }, { id: "b", view: "workflow" }]);
+  });
+});
+
+describe("workflow areas", () => {
+  const layout = { id: "root", axis: "horizontal" as const, fraction: .5, first: { id: "a", view: "workflow" as const }, second: { id: "b", view: "workflow" as const } };
+  it("gives each node editor area its own workflow and keeps them apart", () => {
+    let created = 0;
+    const assigned = assignWorkflowAreas(setAreaWorkflow(layout, "a", "w1"), new Set(["w1"]), () => `novo${++created}`);
+    expect(listAreas(assigned).map((area) => area.workflowId)).toEqual(["w1", "novo1"]);
+    // Trocar o projeto da área B não muda a área A.
+    const switched = setAreaWorkflow(assigned, "b", "w9");
+    expect(listAreas(switched).map((area) => area.workflowId)).toEqual(["w1", "w9"]);
+    // Duas áreas nunca mostram o mesmo workflow: a segunda ganha outro.
+    const duplicated = assignWorkflowAreas(setAreaWorkflow(assigned, "b", "w1"), new Set(["w1"]), () => "outro");
+    expect(listAreas(duplicated).map((area) => area.workflowId)).toEqual(["w1", "outro"]);
+  });
+
+  it("adopts saved workflows that no area shows (old canvas migrated)", () => {
+    const adopted = adoptWorkflows(setAreaWorkflow(layout, "a", "sumiu"), ["migrado", "outro"]);
+    expect(listAreas(adopted).map((area) => area.workflowId)).toEqual(["migrado", "outro"]);
   });
 });

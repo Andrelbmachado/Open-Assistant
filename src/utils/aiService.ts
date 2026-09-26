@@ -43,6 +43,8 @@ export interface AskOptions {
   memory?: string;
   /** Deixa o modelo decidir controlar o PC (ferramenta no Ollama, marcador nos outros). */
   allowComputerControl?: boolean;
+  /** Resposta será falada (modo voz): curta, sem Markdown, emojis ou descrições de expressão. */
+  voice?: boolean;
 }
 
 interface OllamaChatResult {
@@ -63,7 +65,7 @@ interface OllamaChatDelta extends AIDelta {
 /** Erro mostrado quando o chat não tem modelo local escolhido. */
 export const NO_LOCAL_MODEL_ERROR = "Nenhum modelo local selecionado. Baixe um modelo em Configurações › Modelos locais ou escolha um modelo instalado em + › Modelo de IA.";
 
-const SYSTEM_PROMPT = "Você é o Open Assistant, um assistente pessoal que roda localmente no computador Windows do usuário. Responda no idioma do usuário (por padrão, português do Brasil), de forma clara, direta e útil.";
+const SYSTEM_PROMPT = "Você é o Open Assistant, um assistente pessoal que roda localmente no computador Windows do usuário. Responda no idioma do usuário (por padrão, português do Brasil), de forma clara, direta e útil. Não use emojis, a menos que o usuário peça.";
 /**
  * O app controla o PC sozinho quando o modelo decide que precisa. Sem isto o modelo respondia
  * "não consigo abrir o PowerShell, sou só um modelo de texto".
@@ -82,6 +84,11 @@ const COMPUTER_TOOL = {
 const TOOL_INSTRUCTION = `Se o pedido exigir agir no computador, chame a ferramenta ${COMPUTER_TOOL_NAME} em vez de responder.`;
 /** Modelos sem ferramentas (nuvem, BitNet) pedem o controle com este marcador. */
 export const COMPUTER_MARKER = "[[CONTROLAR_PC]]";
+/**
+ * Modo voz: a resposta vira fala. Sem isto o modelo mandava listas, emojis (lidos como "rosto
+ * sorridente") e descrições do próprio tom, e respondia "vamos conversar" com um monólogo.
+ */
+export const VOICE_INSTRUCTION = "Esta conversa é por voz: sua resposta será falada em voz alta. Fale como numa conversa de verdade: frases curtas e naturais, no máximo duas ou três, e só o essencial. Não use listas, títulos, Markdown nem emojis. Nunca descreva expressões, gestos, tom ou ações (nada de 'sorrindo', '*risos*' ou '(pausa)'); escreva apenas as palavras que devem ser ditas. Se a pessoa quiser só conversar, responda com um comentário ou uma pergunta curta e deixe ela falar.";
 const MARKER_INSTRUCTION = `Se o pedido exigir agir no computador, responda somente ${COMPUTER_MARKER} e nada mais: o app assume o controle.`;
 
 /** Extrai o id do Ollama de `Ollama: <id>` (undefined para outros formatos). */
@@ -94,10 +101,10 @@ export function ollamaModelId(model: string): string | undefined {
  * Envia a conversa ao Ollama local pelo backend. Não há fallback para nuvem nem
  * resposta simulada: qualquer falha do Ollama é repassada ao chat.
  */
-export function systemPromptFor(effort?: EffortLevel, memory = "", control: "tool" | "marker" | "none" = "none"): string {
+export function systemPromptFor(effort?: EffortLevel, memory = "", control: "tool" | "marker" | "none" = "none", voice = false): string {
   const instruction = effort ? EFFORT_INFO[effort].instruction : undefined;
   const controlText = control === "tool" ? ` ${TOOL_INSTRUCTION}` : control === "marker" ? ` ${MARKER_INSTRUCTION}` : "";
-  return `${SYSTEM_PROMPT} ${APP_CAPABILITIES}${controlText}${instruction ? ` ${instruction}` : ""}${memory}`;
+  return `${SYSTEM_PROMPT} ${APP_CAPABILITIES}${controlText}${instruction ? ` ${instruction}` : ""}${voice ? ` ${VOICE_INSTRUCTION}` : ""}${memory}`;
 }
 
 /** Marcador de controle no texto de modelos sem ferramentas. */
@@ -153,7 +160,7 @@ export async function askAI(model: string, messages: AIMessage[], options: AskOp
     const result = await invoke<OllamaChatResult>("ollama_chat", {
       requestId,
       model: modelId,
-      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "tool" : "none") }, ...messages],
+      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "tool" : "none", options.voice) }, ...messages],
       think: effort?.think ?? options.think ?? false,
       thinkLevel: effort?.think ? effort.thinkLevel : undefined,
       options: options.allowComputerControl ? { tools: [COMPUTER_TOOL] } : undefined,
@@ -184,7 +191,7 @@ async function askBitnet(messages: AIMessage[], requestId: string, options: AskO
   try {
     const result = await invoke<OllamaChatResult>("bitnet_chat", {
       requestId,
-      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "marker" : "none") }, ...messages],
+      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "marker" : "none", options.voice) }, ...messages],
     });
     return { wantsComputer: options.allowComputerControl && hasComputerMarker(result.content), text: result.content.trim(), source: "BitNet (bitnet.cpp)", tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
   } catch (error) {
@@ -204,7 +211,7 @@ async function askCloud(providerId: string, model: string, messages: AIMessage[]
   try {
     const result = await invoke<OllamaChatResult>("cloud_chat", {
       requestId, providerId, model, baseUrl,
-      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "marker" : "none") }, ...messages],
+      messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "marker" : "none", options.voice) }, ...messages],
     });
     return { wantsComputer: options.allowComputerControl && hasComputerMarker(result.content), text: result.content.trim(), source: cloudDisplayName(`Nuvem: ${providerId}/${model}`) ?? providerId, tokensPerSecond: result.tokensPerSecond ?? undefined, tokens: result.evalCount ?? undefined, cancelled: result.cancelled };
   } catch (error) {

@@ -15,3 +15,11 @@ export function nextComposerPopover(current: ComposerPopover | null, requested: 
 export function getVisibleTokensPerSecond(metric: GenerationMetric | undefined, chatId: string, model: string): number | undefined {
   return metric?.chatId === chatId && metric.model === model ? metric.tokensPerSecond : undefined;
 }
+
+/** Junta o texto ditado ao rascunho, com um espaço entre os dois quando preciso. */
+export function appendDictation(draft: string, spoken: string): string {
+  const text = spoken.trim();
+  if (!text) return draft;
+  if (!draft.trim()) return text;
+  return /\s$/.test(draft) ? `${draft}${text}` : `${draft} ${text}`;
+}

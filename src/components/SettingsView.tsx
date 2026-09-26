@@ -1,22 +1,56 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl as openExternalUrl } from "@tauri-apps/plugin-opener";
-import { Atom, Bot, Boxes, Brain, Cable, Check, ChevronRight, CircleDot, Download, Eye, EyeOff, KeyRound, Mic, Orbit, Palette, Play, RefreshCw, Settings2, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
+import { Atom, Bot, Boxes, Brain, Cable, Check, ChevronRight, CircleDot, Download, Eye, EyeOff, KeyRound, Mic, Orbit, Palette, Play, RefreshCw, RotateCcw, Settings2, ShieldCheck, Sparkles, Trash2, X, ScrollText } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useStore, type SettingsTab, type Theme } from "../store/store";
 import { refreshInstalledModels } from "../store/localModelsStore";
 import { isQAOffline } from "../utils/qaMode";
 import { createProviderId, type ProviderConfig, validateProviderConfig } from "../utils/providers";
 import { ORBITAL_SKIN_LABELS, ORBITAL_SKINS } from "../utils/orbitalState";
+import { EFFORT_SKIN_LABELS, EFFORT_SKINS } from "../utils/effortSkin";
+import { EffortControl } from "./EffortControl";
+import { FONT_SCALE_MAX, FONT_SCALE_MIN, FONT_SCALE_STEP, type FontScaleKey } from "../utils/fontScale";
 import { FacePreview } from "./FacePreview";
 import { LocalModelsPanel } from "./LocalModelsPanel";
 import { ProviderLogo, ProviderSelect } from "./ProviderSelect";
 import { McpPanel } from "./McpPanel";
+import { LogsPanel } from "./LogsPanel";
 import { MemorySettings } from "./MemorySettings";
 import { ToolsPanel } from "./ToolsPanel";
 import { BUILTIN_PROVIDERS, KEY_PAGES, KEY_PLACEHOLDERS } from "../utils/cloudModels";
 import { VoiceSettings } from "./VoiceSettings";
 
 const SKIN_ICONS = { robot: Bot, super: Orbit, tentacles: Sparkles, sphere: CircleDot, atom: Atom } as const;
+
+const FONT_SCALE_ROWS: { key: FontScaleKey; label: string; sample: string }[] = [
+  { key: "title", label: "Títulos", sample: "Configurações" },
+  { key: "subtitle", label: "Subtítulos e rótulos", sample: "Rodando neste computador" },
+  { key: "body", label: "Texto corrido", sample: "Mensagens, menus e botões" },
+];
+
+/** Três controles de tamanho de fonte; o app inteiro muda na hora (variáveis --fs-*). */
+function FontScaleSettings() {
+  const { state, dispatch } = useStore();
+  const changed = FONT_SCALE_ROWS.some(({ key }) => state.fontScale[key] !== 1);
+  return <div className="setting-card font-scale-card">
+    <div className="face-card-head"><label>Tamanho das fontes</label><button className="font-scale-reset" disabled={!changed} onClick={() => dispatch({ type: "resetFontScale" })}><RotateCcw size={12} />Padrão</button></div>
+    {FONT_SCALE_ROWS.map(({ key, label, sample }) => <div key={key} className={`font-scale-row ${key}`}>
+      <span><b>{label}</b><small className={`font-scale-sample ${key}`}>{sample}</small></span>
+      <input type="range" min={FONT_SCALE_MIN} max={FONT_SCALE_MAX} step={FONT_SCALE_STEP} value={state.fontScale[key]} aria-label={`Tamanho de ${label.toLocaleLowerCase("pt-BR")}`} aria-valuetext={`${Math.round(state.fontScale[key] * 100)}%`} onChange={(event) => dispatch({ type: "fontScale", key, value: Number(event.target.value) })} />
+      <output>{Math.round(state.fontScale[key] * 100)}%</output>
+    </div>)}
+  </div>;
+}
+
+/** Visual do slider de esforço: escolhe o efeito do Ultra e mostra a prévia ao vivo. */
+function EffortSkinSettings() {
+  const { state, dispatch } = useStore();
+  return <div className="setting-card effort-skin-card">
+    <div className="face-card-head"><label>Slider de esforço</label><small>Animação do nível Ultra.</small></div>
+    <div className="segmented" role="radiogroup" aria-label="Visual do slider de esforço">{EFFORT_SKINS.map((skin) => <button key={skin} role="radio" aria-checked={state.effortSkin === skin} className={state.effortSkin === skin ? "active" : ""} onClick={() => dispatch({ type: "setEffortSkin", skin })}>{EFFORT_SKIN_LABELS[skin]}</button>)}</div>
+    <EffortControl value="ultra" onChange={() => undefined} skin={state.effortSkin} />
+  </div>;
+}
 
 interface RuntimeStatus { component: "ollama" | "openclaw"; installed: boolean; running: boolean; version?: string; binaryPath?: string; port: number; error?: string }
 const builtinProviders: ProviderConfig[] = BUILTIN_PROVIDERS;
@@ -126,15 +160,17 @@ export function SettingsView() {
           <button className={tab === "mcp" ? "active" : ""} onClick={() => setTab("mcp")}><Cable size={16} />Conectores MCP<ChevronRight size={13} /></button>
           <button className={tab === "runtimes" ? "active" : ""} onClick={() => setTab("runtimes")}><Bot size={16} />Runtimes locais<ChevronRight size={13} /></button>
           <button className={tab === "permissions" ? "active" : ""} onClick={() => setTab("permissions")}><ShieldCheck size={16} />Permissões<ChevronRight size={13} /></button>
+          <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}><ScrollText size={16} />Logs<ChevronRight size={13} /></button>
         </nav>
         <div className="settings-content">
-          {tab === "general" && <><div className="settings-heading"><span>Aparência</span><h3>Liquidglass Flat</h3><p>Superfícies precisas e leves, desenhadas para o Windows 11.</p></div><div className="setting-card"><label>Tema</label><div className="segmented">{(["dark", "light", "system"] as Theme[]).map((theme) => <button key={theme} className={state.theme === theme ? "active" : ""} onClick={() => dispatch({ type: "theme", theme })}>{theme === "dark" ? "Escuro" : theme === "light" ? "Claro" : "Sistema"}</button>)}</div></div><div className="setting-card"><label>Cor de destaque</label><div className="accent-options">{["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].map((color) => <button key={color} className={state.accent === color ? "active" : ""} style={{ background: color }} onClick={() => dispatch({ type: "accent", accent: color })}>{state.accent === color && <Check size={14} />}</button>)}</div></div><div className="setting-card face-card"><div className="face-card-head"><label>Rosto do assistente</label><small>Aparece somente no modo fala.</small></div><div className="segmented orbital-settings">{ORBITAL_SKINS.map((skin) => { const Icon = SKIN_ICONS[skin]; return <button key={skin} className={state.orbitalSkin === skin ? "active" : ""} title={ORBITAL_SKIN_LABELS[skin]} onClick={() => dispatch({ type: "setOrbitalSkin", skin })}><Icon size={15} />{ORBITAL_SKIN_LABELS[skin]}</button>; })}</div><FacePreview skin={state.orbitalSkin} /></div></>}
+          {tab === "general" && <><div className="settings-heading"><span>Aparência</span><h3>Liquidglass Flat</h3><p>Superfícies precisas e leves, desenhadas para o Windows 11.</p></div><div className="setting-card"><label>Tema</label><div className="segmented">{(["dark", "light", "system"] as Theme[]).map((theme) => <button key={theme} className={state.theme === theme ? "active" : ""} onClick={() => dispatch({ type: "theme", theme })}>{theme === "dark" ? "Escuro" : theme === "light" ? "Claro" : "Sistema"}</button>)}</div></div><div className="setting-card"><label>Cor de destaque</label><div className="accent-options">{["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].map((color) => <button key={color} className={state.accent === color ? "active" : ""} style={{ background: color }} onClick={() => dispatch({ type: "accent", accent: color })}>{state.accent === color && <Check size={14} />}</button>)}</div></div><div className="setting-card face-card"><div className="face-card-head"><label>Rosto do assistente</label><small>Aparece somente no modo fala.</small></div><div className="segmented orbital-settings">{ORBITAL_SKINS.map((skin) => { const Icon = SKIN_ICONS[skin]; return <button key={skin} className={state.orbitalSkin === skin ? "active" : ""} title={ORBITAL_SKIN_LABELS[skin]} onClick={() => dispatch({ type: "setOrbitalSkin", skin })}><Icon size={15} />{ORBITAL_SKIN_LABELS[skin]}</button>; })}</div><FacePreview skin={state.orbitalSkin} /></div><EffortSkinSettings /><FontScaleSettings /></>}
           {tab === "providers" && <><div className="settings-heading runtime-heading"><div><span>Modelos em nuvem</span><h3>Provedores de IA</h3><p>Chaves ficam no Gerenciador de Credenciais do Windows e só o backend as lê. Com a chave salva, o modelo aparece em + › Modelo de IA › Nuvem.</p></div><button className="flat-button" onClick={addProvider}>Adicionar provedor</button></div><div className="credential-form"><div className="credential-field"><span>Provedor</span><ProviderSelect providers={providerConfigs} value={provider} saved={saved} onChange={setProvider} /></div><label>Chave de API<div className="secret-input"><input type={showSecret ? "text" : "password"} value={secret} onChange={(event) => setSecret(event.target.value)} placeholder={KEY_PLACEHOLDERS[provider] ?? "sk-••••••••••••••••"} /><button onClick={() => setShowSecret(!showSecret)}>{showSecret ? <EyeOff size={15} /> : <Eye size={15} />}</button></div></label><div className="credential-actions"><button className="primary-button" onClick={saveKey} disabled={!secret.trim()}><KeyRound size={15} />Salvar credencial</button>{KEY_PAGES[provider] && <button className="flat-button" onClick={() => void openUrl(KEY_PAGES[provider])}>Criar chave no site</button>}</div>{message && <p className="settings-message">{message}</p>}</div><div className="provider-list">{providerConfigs.map((item) => <div key={item.id} className={`provider-row ${provider === item.id ? "selected" : ""}`} onClick={() => setProvider(item.id)}><ProviderLogo provider={item} /><span className="provider-row-meta"><span className={`provider-status ${saved[item.id] ? "on" : ""}`}><i />{saved[item.id] ? "Credencial protegida" : "Sem credencial"}</span>{item.kind === "custom" && <small>{item.defaultModel} · {item.baseUrl}</small>}</span><div className="provider-row-actions">{item.kind === "custom" && <button title="Editar" onClick={(event) => { event.stopPropagation(); editProvider(item); }}>Editar</button>}<button title={item.kind === "custom" ? "Remover provedor" : "Excluir credencial"} aria-label={item.kind === "custom" ? `Remover ${item.name}` : `Excluir credencial de ${item.name}`} disabled={item.kind === "builtin" && !saved[item.id]} onClick={(event) => { event.stopPropagation(); void removeProvider(item); }}><Trash2 size={14} /></button></div></div>)}</div></>}
           {tab === "memory" && <MemorySettings />}
           {tab === "models" && <LocalModelsPanel />}
           {tab === "tools" && <ToolsPanel />}
           {tab === "voice" && <VoiceSettings />}
           {tab === "mcp" && <McpPanel />}
+          {tab === "logs" && <LogsPanel />}
           {tab === "runtimes" && <><div className="settings-heading runtime-heading"><div><span>Execução local</span><h3>Ollama e OpenClaw</h3><p>O Open Assistant nunca instala runtimes automaticamente.</p></div><button className="flat-button" onClick={refreshRuntimes} disabled={checking}><RefreshCw size={14} className={checking ? "spin" : ""} />Verificar</button></div><div className="runtime-notice"><ShieldCheck size={18} /><div><strong>Você mantém o controle</strong><p>Os botões abaixo apenas abrem a página oficial. O download e a instalação só acontecem quando você decidir.</p></div></div><div className="runtime-list">{(["ollama", "openclaw"] as const).map((id) => { const status = runtimes.find((item) => item.component === id); const info = runtimeInfo[id]; return <article key={id}><span className="runtime-logo">{id === "ollama" ? "OL" : "OC"}</span><div className="runtime-copy"><div><h4>{info.title}</h4><span className={`status-badge ${status?.running ? "running" : status?.installed ? "installed" : "missing"}`}>{status?.running ? "Rodando" : status?.installed ? "Instalado" : "Não instalado"}</span></div><p>{info.description}</p><small>{status?.version ?? (status?.installed ? status.binaryPath : `Porta padrão: ${status?.port ?? "—"}`)}</small></div><div style={{ display: "flex", gap: "8px" }}>{status?.installed && !status?.running && <button className="flat-button" onClick={() => handleStartRuntime(id)} title="Iniciar serviço local"><Play size={14} />Iniciar</button>}<button className="flat-button" onClick={() => openUrl(info.url)}><Download size={14} />{status?.installed ? "Site oficial" : "Baixar manualmente"}</button></div></article>; })}</div>{message && <p className="settings-message">{message}</p>}</>}
           {tab === "permissions" && <><div className="settings-heading"><span>Segurança</span><h3>Permissões dos agentes</h3><p>Defina limites antes de conectar modelos e ferramentas.</p></div><div className="permission-list">{["Ler arquivos do projeto", "Criar e editar arquivos", "Executar comandos no terminal", "Acessar a rede externa", "Alterar workflows"].map((name, index) => <label key={name}><span><strong>{name}</strong><small>{index < 2 ? "Permitido no workspace atual" : "Exigir confirmação"}</small></span><input type="checkbox" defaultChecked={index < 2} /></label>)}</div></>}
         </div>

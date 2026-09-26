@@ -8,6 +8,8 @@
 //!    (`allow` / `confirm` / `deny`) aqui no Rust — a interface não decide sozinha.
 
 use super::computer::{self, PointTarget};
+use super::changes;
+use super::desktop;
 use super::mcp;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -26,7 +28,7 @@ use tauri::{AppHandle, Manager};
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub const SKILL_NAME: &str = "controle-do-windows";
 /// Suba ao mudar os arquivos empacotados: a cópia em AppData é regravada (exceto `memoria/`).
-const SKILL_VERSION: &str = "2026-09-25.5";
+const SKILL_VERSION: &str = "2026-09-26.4";
 
 /// Arquivos da skill embutidos no executável (fonte: `src-tauri/skills/controle-do-windows`).
 const SKILL_FILES: &[(&str, &str)] = &[
@@ -51,13 +53,21 @@ const SKILL_FILES: &[(&str, &str)] = &[
     ("references/seguranca.md", include_str!("../skills/controle-do-windows/references/seguranca.md")),
     ("references/frases.md", include_str!("../skills/controle-do-windows/references/frases.md")),
     ("references/abrir-programas.md", include_str!("../skills/abrir-programas/SKILL.md")),
+    ("references/mover-arquivos-e-janelas.md", include_str!("../skills/mover-arquivos-e-janelas/SKILL.md")),
+    ("references/movimento_robo.md", include_str!("../skills/mover-arquivos-e-janelas/movimento_robo.md")),
+    ("references/posicoes_na_tela.md", include_str!("../skills/mover-arquivos-e-janelas/posicoes_na_tela.md")),
+    ("references/node-editor.md", include_str!("../skills/node-editor/SKILL.md")),
     ("memoria/preferencias.md", include_str!("../skills/controle-do-windows/memoria/preferencias.md")),
     ("memoria/apps.yaml", include_str!("../skills/controle-do-windows/memoria/apps.yaml")),
     ("memoria/usuario.md", include_str!("../skills/controle-do-windows/memoria/usuario.md")),
 ];
 
 /// Outras skills empacotadas (pasta irmã de `controle-do-windows`), invocáveis com "/nome" no compositor.
-const EXTRA_SKILLS: &[(&str, &str)] = &[("abrir-programas", include_str!("../skills/abrir-programas/SKILL.md"))];
+const EXTRA_SKILLS: &[(&str, &str)] = &[
+    ("abrir-programas", include_str!("../skills/abrir-programas/SKILL.md")),
+    ("mover-arquivos-e-janelas", include_str!("../skills/mover-arquivos-e-janelas/SKILL.md")),
+    ("node-editor", include_str!("../skills/node-editor/SKILL.md")),
+];
 
 // ---------------------------------------------------------------- skill em disco
 
@@ -478,7 +488,17 @@ pub fn command_decision(command: &str, access: Access) -> Decision {
 pub fn decide(tool: &str, args: &Value, access: Access, catalog: &Catalog) -> Decision {
     let string = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
     match tool {
-        "look" | "web_search" | "read_url" | "read_skill_file" | "ask_user" | "list_windows" => Decision::Allow,
+        "look" | "web_search" | "read_url" | "read_skill_file" | "ask_user" | "list_windows" | "desktop_items" | "read_file" | "read_logs" => Decision::Allow,
+        "write_file" | "edit_file" => {
+            let path = changes::resolve(&string("path")).unwrap_or_default();
+            let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| string("path"));
+            match access {
+                Access::ReadOnly => Decision::Deny("O acesso está em \"Somente leitura\": não altero arquivos.".into()),
+                _ if changes::protected(&path).is_some() => Decision::Deny(format!("Não altero arquivos {}.", changes::protected(&path).unwrap_or_default())),
+                Access::Ask => Decision::Confirm(format!("Alterar o arquivo {name}? (dá para desfazer no fim)")),
+                Access::Auto => Decision::Allow,
+            }
+        }
         // O intent `run_command` do catálogo ("executa o comando …") é o próprio run_command: mesma política.
         "run_intent" if string("id") == "run_command" => decide("run_command", &json!({ "command": slots_from(args).get("command").cloned().unwrap_or_default() }), access, catalog),
         "run_intent" => {
@@ -509,7 +529,12 @@ pub fn decide(tool: &str, args: &Value, access: Access, catalog: &Catalog) -> De
                 Access::Auto => Decision::Allow,
             }
         }
-        "click" | "type_text" | "scroll" | "focus_window" => match access {
+        "move_file" if !string("into").trim().is_empty() => match access {
+            Access::ReadOnly => Decision::Deny("O acesso está em \"Somente leitura\".".into()),
+            Access::Ask => Decision::Confirm(format!("Guardar \"{}\" dentro da pasta \"{}\"?", string("name"), string("into"))),
+            Access::Auto => Decision::Allow,
+        },
+        "click" | "drag" | "move_window" | "move_file" | "open_file" | "type_text" | "scroll" | "focus_window" => match access {
             Access::ReadOnly => Decision::Deny("O acesso está em \"Somente leitura\".".into()),
             Access::Ask => Decision::Confirm("Usar o mouse/teclado no seu computador?".into()),
             Access::Auto => Decision::Allow,
@@ -592,6 +617,12 @@ pub fn run_intent(app: &AppHandle, id: &str, slots: &HashMap<String, String>) ->
     if let Some(app_name) = slots.get("app").cloned() {
         if let Some(exe) = resolve_app_alias(&dir, &app_name) {
             slots.insert("app".into(), exe);
+        }
+    }
+    // Modelos pequenos mandam o nome da pasta em "name"/"nome"/"folder" (o log mostrou "path ausente").
+    if !slots.contains_key("path") {
+        if let Some(name) = ["name", "nome", "folder", "pasta"].iter().find_map(|key| slots.get(*key).cloned()) {
+            slots.insert("path".into(), name);
         }
     }
     if id == "open_browser" && slots.get("browser").map_or(true, |value| value == "default" || value.is_empty()) {
@@ -804,11 +835,24 @@ pub fn tool_definitions() -> Value {
         function("run_command", "Roda um comando PowerShell (padrão) ou cmd quando não houver intent. Saída resumida.",
             json!({ "command": { "type": "string" }, "shell": { "type": "string", "enum": ["powershell", "cmd"] },
                     "cwd": { "type": "string", "description": "pasta de trabalho (opcional)" } }), &["command"]),
-        function("look", "Lê a janela da frente (que não é o chat). elements = lista numerada de botões/campos/links (barato); both = print com os números desenhados; screenshot = só o print.",
-            json!({ "mode": { "type": "string", "enum": ["elements", "both", "screenshot"] } }), &[]),
+        function("look", "Lê a janela da frente (que não é o chat). elements = lista numerada de botões/campos/links (barato); both = print com os números desenhados; screenshot = só o print. window=desktop lê os ícones da área de trabalho.",
+            json!({ "mode": { "type": "string", "enum": ["elements", "both", "screenshot"] }, "window": { "type": "string", "enum": ["front", "desktop"] } }), &[]),
         function("click", "Clica com o mouse próprio. Use element (número da última lista) ou x,y em pixels do último print.",
             json!({ "element": { "type": "integer" }, "x": { "type": "number" }, "y": { "type": "number" },
                     "button": { "type": "string", "enum": ["left", "right", "middle"] }, "double": { "type": "boolean" } }), &[]),
+        function("drag", "Arrasta com o mouse próprio: pega em from e solta em to (mover ícone, arquivo para pasta, janela). Cada ponto: element (número da lista) ou x,y do último print.",
+            json!({ "from": { "type": "object", "properties": { "element": { "type": "integer" }, "x": { "type": "number" }, "y": { "type": "number" } } },
+                    "to": { "type": "object", "properties": { "element": { "type": "integer" }, "x": { "type": "number" }, "y": { "type": "number" } } } }), &["from", "to"]),
+        function("move_window", "Move uma JANELA de programa com as mãos do robô (segura num trecho livre da barra de título, acerta de primeira). place: direita/esquerda (metade da tela), maximizar, outro monitor, uma das 9 zonas (cima esquerda … baixo direita), \"70% 30%\" ou \"um pouco para cima\". Ou x,y = novo canto superior esquerdo. Nunca use print/drag para mover janela. Ícone/pasta da área de trabalho: use move_file.",
+            json!({ "query": { "type": "string", "description": "parte do título ou do nome do app" }, "place": { "type": "string", "description": "zona do mapa da tela, ex.: \"cima direita\", \"direita\", \"maximizar\"" }, "x": { "type": "integer" }, "y": { "type": "integer" },
+                    "speed": { "type": "string", "description": "devagar, normal ou rapido (padrão: a do usuário)" }, "path": { "type": "string", "enum": ["natural", "reto"] } }), &["query"]),
+        function("desktop_items", "Lista os ícones da área de trabalho (nome exato e centro na tela). Mais preciso e barato que look.",
+            json!({}), &[]),
+        function("move_file", "O robô pega um ícone/pasta/arquivo da área de trabalho pelo nome e anda com ele até outro lugar da tela (uma chamada faz tudo: pegar, carregar, soltar). place = uma das 9 zonas (cima esquerda, cima centro, cima direita, meio esquerda, centro, meio direita, baixo esquerda, baixo centro, baixo direita), direita/esquerda/cima/baixo, \"outro lado\", \"70% 30%\", \"um pouco para a direita\" ou \"ao lado de <nome>\". Ou into = pasta da área de trabalho onde guardar o item.",
+            json!({ "name": { "type": "string", "description": "nome do arquivo/pasta como aparece na área de trabalho" }, "place": { "type": "string", "description": "zona do mapa da tela, ex.: \"cima direita\"" }, "screen_x": { "type": "integer" }, "screen_y": { "type": "integer" }, "into": { "type": "string", "description": "pasta da área de trabalho onde guardar o item" },
+                    "speed": { "type": "string", "description": "devagar, normal ou rapido (padrão: a do usuário)" }, "path": { "type": "string", "enum": ["natural", "reto"], "description": "natural = curva leve de pessoa andando (padrão); reto = linha reta" } }), &["name"]),
+        function("open_file", "Abre (clique duplo virtual) um arquivo, pasta ou atalho da área de trabalho pelo nome.",
+            json!({ "name": { "type": "string" } }), &["name"]),
         function("type_text", "Digita texto onde o cursor de texto estiver. enter=true aperta Enter no fim.",
             json!({ "text": { "type": "string" }, "enter": { "type": "boolean" } }), &["text"]),
         function("press_keys", "Aperta um atalho, ex.: ctrl+l, ctrl+t, alt+tab, win+r, enter, esc.",
@@ -817,6 +861,8 @@ pub fn tool_definitions() -> Value {
             json!({ "amount": { "type": "integer" }, "element": { "type": "integer" }, "x": { "type": "number" }, "y": { "type": "number" } }), &["amount"]),
         function("focus_window", "Traz para frente a janela cujo título ou app contém o texto.",
             json!({ "query": { "type": "string" } }), &["query"]),
+        function("list_windows", "Monitores (área útil), janelas abertas com posição/tamanho e, com desktop=true, os ícones da área de trabalho.",
+            json!({ "desktop": { "type": "boolean" } }), &[]),
         function("web_search", "Pesquisa na web e devolve títulos, links e resumos em texto (não abre o navegador).",
             json!({ "query": { "type": "string" } }), &["query"]),
         function("read_url", "Lê o texto principal de uma página (sem abrir o navegador).",
@@ -825,6 +871,19 @@ pub fn tool_definitions() -> Value {
             json!({ "path": { "type": "string" } }), &["path"]),
         function("ask_user", "Faz uma pergunta curta ao usuário (confirmação ou dado que falta) e encerra a vez.",
             json!({ "question": { "type": "string" } }), &["question"]),
+        function("read_logs", "Lê os logs do Open Assistant (erros da IA, imagem, voz, memória, agente). Use para diagnosticar um erro antes de chutar a causa.",
+            json!({ "limit": { "type": "integer", "description": "quantas entradas (padrão 80)" },
+                    "level": { "type": "string", "enum": ["erro", "aviso", "info", "todos"] },
+                    "query": { "type": "string", "description": "filtra por texto, ex.: imagem, memória, ollama" } }), &[]),
+        function("read_file", "Lê um arquivo de texto/código com números de linha (use antes de edit_file para copiar o trecho exato).",
+            json!({ "path": { "type": "string", "description": "caminho completo, ex.: C:\\Users\\voce\\projeto\\app.py (ou ~\\projeto\\app.py)" },
+                    "offset": { "type": "integer", "description": "primeira linha (1 = início)" },
+                    "limit": { "type": "integer", "description": "quantas linhas (padrão 400)" } }), &["path"]),
+        function("write_file", "Cria ou reescreve um arquivo de texto/código inteiro. Sempre use isto (ou edit_file) para mexer em arquivos — nunca Set-Content/Out-File: o app mostra o que mudou e deixa desfazer.",
+            json!({ "path": { "type": "string" }, "content": { "type": "string", "description": "conteúdo completo do arquivo" } }), &["path", "content"]),
+        function("edit_file", "Troca um trecho exato de um arquivo por outro (old_text precisa aparecer uma vez só; copie do read_file sem os números de linha).",
+            json!({ "path": { "type": "string" }, "old_text": { "type": "string" }, "new_text": { "type": "string" },
+                    "replace_all": { "type": "boolean", "description": "troca todas as ocorrências" } }), &["path", "old_text", "new_text"]),
     ])
 }
 
@@ -896,13 +955,35 @@ fn slots_from(args: &Value) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-fn execute(app: &AppHandle, tool: &str, args: &Value) -> ToolOutcome {
-    let string = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
-    let target = PointTarget {
-        element: args.get("element").and_then(Value::as_u64).map(|value| value as u32),
-        x: args.get("x").and_then(Value::as_f64),
-        y: args.get("y").and_then(Value::as_f64),
+/// Destino de mover: lugar em palavras (`place`) ou pixels da tela.
+fn destination(args: &Value, x_key: &str, y_key: &str) -> desktop::Destination {
+    let number = |key: &str| args.get(key).and_then(Value::as_f64).map(|value| value as i32);
+    // `speed`: "devagar", "normal", "rapido" ou px/s (texto ou número); sem nada = a do usuário.
+    let speed = match args.get("speed") {
+        Some(Value::Number(value)) => value.as_f64().and_then(|value| crate::choreo::parse_speed(&value.to_string())),
+        Some(Value::String(text)) => crate::choreo::parse_speed(text),
+        _ => None,
     };
+    let path = args.get("path").and_then(Value::as_str).map(crate::choreo::PathStyle::parse).unwrap_or(crate::choreo::PathStyle::Natural);
+    desktop::Destination {
+        screen_x: number(x_key),
+        screen_y: number(y_key),
+        place: args.get("place").and_then(Value::as_str).filter(|place| !place.trim().is_empty()).map(str::to_string),
+        into: args.get("into").and_then(Value::as_str).filter(|into| !into.trim().is_empty()).map(str::to_string),
+        gait: Some(crate::choreo::Gait { speed: speed.unwrap_or_else(crate::choreo::user_speed), path }),
+    }
+}
+
+fn execute(app: &AppHandle, tool: &str, args: &Value, task: &str) -> ToolOutcome {
+    let string = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
+    let point = |value: &Value| PointTarget {
+        element: value.get("element").and_then(Value::as_u64).map(|value| value as u32),
+        x: value.get("x").and_then(Value::as_f64),
+        y: value.get("y").and_then(Value::as_f64),
+        screen_x: value.get("screen_x").and_then(Value::as_i64).map(|value| value as i32),
+        screen_y: value.get("screen_y").and_then(Value::as_i64).map(|value| value as i32),
+    };
+    let target = point(args);
     match tool {
         "run_intent" if string("id") == "run_command" => outcome(run_command(app, "powershell", slots_from(args).get("command").map(String::as_str).unwrap_or_default(), None)),
         "run_intent" => outcome(run_intent(app, &string("id"), &slots_from(args))),
@@ -913,7 +994,8 @@ fn execute(app: &AppHandle, tool: &str, args: &Value) -> ToolOutcome {
         }
         "look" => {
             let mode = args.get("mode").and_then(Value::as_str).unwrap_or("elements");
-            match computer::look(app, mode) {
+            let desktop = args.get("window").and_then(Value::as_str) == Some("desktop");
+            match computer::look_at(app, mode, desktop) {
                 Ok(look) => {
                     let header = look
                         .window
@@ -944,8 +1026,52 @@ fn execute(app: &AppHandle, tool: &str, args: &Value) -> ToolOutcome {
         "type_text" => outcome(computer::type_text(app, &string("text"), args.get("enter").and_then(Value::as_bool).unwrap_or(false))),
         "press_keys" => outcome(computer::press_keys(&string("keys"))),
         "scroll" => outcome(computer::scroll(app, &target, args.get("amount").and_then(Value::as_i64).unwrap_or(3) as i32)),
+        // Modelo pequeno às vezes chama move_window para uma pasta da área de trabalho: se não há janela com
+        // esse nome mas há um ícone, leva o ícone (é o que a pessoa pediu).
+        "move_window" => outcome(desktop::move_window(app, &string("query"), &destination(args, "x", "y")).or_else(|error| {
+            let is_icon = desktop::desktop_items().map(|items| items.iter().any(|item| crate::agent::normalize(&item.name) == crate::agent::normalize(&string("query")))).unwrap_or(false);
+            if is_icon {
+                desktop::move_item(app, &string("query"), &destination(args, "screen_x", "screen_y"))
+            } else {
+                Err(error)
+            }
+        })),
+        "move_file" => outcome(desktop::move_item(app, &string("name"), &destination(args, "screen_x", "screen_y"))),
+        "open_file" => outcome(desktop::open_item(app, &string("name"))),
+        "read_logs" => {
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(80) as usize;
+            let level = args.get("level").and_then(Value::as_str);
+            let query = args.get("query").and_then(Value::as_str);
+            let entries = crate::logs::read(limit.clamp(1, 400), level, query);
+            let memory = crate::resources::memory_status(false);
+            outcome(Ok(format!(
+                "{}
+
+Memória agora: RAM livre {:.1}/{:.1} GB, reservada livre {:.1}/{:.1} GB.",
+                crate::logs::as_text(&entries),
+                memory.ram_free_gb,
+                memory.ram_total_gb,
+                memory.commit_free_gb,
+                memory.commit_total_gb
+            )))
+        }
+        "read_file" => outcome(changes::read_file(
+            &string("path"),
+            args.get("offset").and_then(Value::as_u64).map(|value| value as usize),
+            args.get("limit").and_then(Value::as_u64).map(|value| value as usize),
+        )),
+        "write_file" => outcome(changes::write_file(app, task, &string("path"), &string("content"))),
+        "edit_file" => outcome(changes::edit_file(app, task, &string("path"), &string("old_text"), &string("new_text"), args.get("replace_all").and_then(Value::as_bool).unwrap_or(false))),
+        "desktop_items" => outcome(desktop::desktop_items().map(|items| {
+            items.iter().map(|item| { let (x, y) = item.center(); format!("\"{}\" @({x},{y})", item.name) }).collect::<Vec<_>>().join("
+")
+        })),
+        "drag" => {
+            let empty = json!({});
+            outcome(computer::drag(app, &point(args.get("from").unwrap_or(&empty)), &point(args.get("to").unwrap_or(&empty))))
+        }
         "focus_window" => outcome(computer::focus_window(&string("query"))),
-        "list_windows" => outcome(computer::list_windows().map(|windows| serde_json::to_string_pretty(&windows).unwrap_or_default())),
+        "list_windows" => outcome(Ok(desktop::overview_text(args.get("desktop").and_then(Value::as_bool).unwrap_or(false)))),
         "web_search" => outcome(web_search(&string("query"))),
         "read_url" => outcome(read_url(&string("url"), args.get("max_chars").and_then(Value::as_u64).unwrap_or(6000) as usize)),
         "read_skill_file" => outcome(read_skill_file(app, &string("path"))),
@@ -1061,23 +1187,56 @@ pub fn agent_route(app: AppHandle, text: String) -> Option<RouteMatch> {
 
 /// Executa uma ferramenta pedida pelo modelo, aplicando a política antes.
 #[tauri::command]
-pub async fn agent_tool(app: AppHandle, name: String, args: Value, access: String, confirmed: bool) -> Result<ToolOutcome, String> {
+pub async fn agent_tool(app: AppHandle, name: String, args: Value, access: String, confirmed: bool, task: Option<String>) -> Result<ToolOutcome, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let decision = decide(&name, &args, Access::parse(&access), &load_catalog(&app));
         match decision {
             Decision::Deny(reason) => ToolOutcome { status: "denied".into(), text: reason.clone(), reason: Some(reason), ..Default::default() },
-            Decision::Confirm(reason) if !confirmed => ToolOutcome { status: "needs_confirm".into(), text: String::new(), reason: Some(reason), ..Default::default() },
-            _ => execute(&app, &name, &args),
+            Decision::Confirm(reason) if !confirmed => {
+                // Antes de perguntar, o robô aponta com o dedo para o que vai clicar/pegar.
+                let reason = pointed_target(&app, &name, &args)
+                    .map(|label| format!("É este: \"{label}\"? {reason}"))
+                    .unwrap_or(reason);
+                ToolOutcome { status: "needs_confirm".into(), text: String::new(), reason: Some(reason), ..Default::default() }
+            }
+            // `task` = id do pedido: as alterações de arquivos da tarefa ficam juntas (cartão "Editou N arquivos").
+            _ => {
+                let result = execute(&app, &name, &args, task.as_deref().unwrap_or("avulso"));
+                if result.status == "error" {
+                    crate::logs::warn("agente", &format!("{name}: {}", result.text.chars().take(600).collect::<String>()));
+                }
+                result
+            }
         }
     })
     .await
     .map_err(|error| error.to_string())
 }
 
-/// Fim de uma tarefa do agente: esconde o cursor próprio.
+/// Para clique e arrasto, leva o robô até o alvo apontando e devolve o nome do alvo.
+fn pointed_target(app: &AppHandle, tool: &str, args: &Value) -> Option<String> {
+    let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
+    let source = match tool {
+        "click" => args,
+        "drag" => args.get("from")?,
+        "move_file" | "open_file" => return desktop::point_at_item(app, &text("name")),
+        "move_window" => return desktop::point_at_window(app, &text("query")),
+        _ => return None,
+    };
+    let target = PointTarget {
+        element: source.get("element").and_then(Value::as_u64).map(|value| value as u32),
+        x: source.get("x").and_then(Value::as_f64),
+        y: source.get("y").and_then(Value::as_f64),
+        screen_x: source.get("screen_x").and_then(Value::as_i64).map(|value| value as i32),
+        screen_y: source.get("screen_y").and_then(Value::as_i64).map(|value| value as i32),
+    };
+    computer::point_at(app, &target)
+}
+
+/// Fim de uma tarefa do agente: o robô volta para o app (modo voz) e o cursor próprio some.
 #[tauri::command]
-pub fn agent_finish(app: AppHandle) {
-    computer::hide_agent_cursor(&app);
+pub async fn agent_finish(app: AppHandle) {
+    let _ = tauri::async_runtime::spawn_blocking(move || computer::hide_agent_cursor(&app)).await;
 }
 
 #[cfg(test)]

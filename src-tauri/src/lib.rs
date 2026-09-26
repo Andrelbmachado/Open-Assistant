@@ -15,13 +15,23 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 
 mod agent;
+mod changes;
+mod files;
+mod logs;
+mod resources;
 mod bitnet;
 mod cloud;
 mod computer;
+mod choreo;
+mod desktop;
+mod places;
+mod imagegen;
 mod mcp;
 mod semantic;
 mod speech;
+mod storage;
 mod tools;
+mod workflow;
 
 const CREDENTIAL_SERVICE: &str = "com.openassistant.windows";
 
@@ -608,11 +618,25 @@ fn ollama_agent(read_timeout: Duration) -> ureq::Agent {
 }
 
 fn ollama_error_body(body: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(body)
+    let message = serde_json::from_str::<serde_json::Value>(body)
         .ok()?
         .get("error")?
-        .as_str()
-        .map(str::to_string)
+        .as_str()?
+        .to_string();
+    Some(explain_ollama_error(message))
+}
+
+/// Erros de memória do Ollama chegam crus ("memory layout cannot be allocated"); diz o que fazer.
+fn explain_ollama_error(message: String) -> String {
+    let lower = message.to_lowercase();
+    let text = if lower.contains("memory layout cannot be allocated") || lower.contains("requires more system memory") || lower.contains("out of memory") {
+        // Diz quem está segurando a memória agora (ex.: "OneDrive (18.8 GB)"), não só "falta memória".
+        format!("O modelo não coube na memória do PC (RAM/placa de vídeo). {} (Ollama: {message})", resources::explain_out_of_memory())
+    } else {
+        message
+    };
+    logs::error("ia", &text);
+    text
 }
 
 fn ollama_error(error: ureq::Error) -> String {
@@ -1078,6 +1102,21 @@ fn run_chat(
     options: &ChatOptions,
     cancel: &AtomicBool,
 ) -> Result<OllamaChatResult, String> {
+    let cancelled_result = || OllamaChatResult {
+        model: model.to_string(),
+        content: String::new(),
+        thinking: String::new(),
+        cancelled: true,
+        eval_count: None,
+        eval_duration_ns: None,
+        tokens_per_second: None,
+        thinking_tokens: 0,
+        prompt_eval_count: None,
+        tool_calls: Vec::new(),
+    };
+    if cancel.load(Ordering::SeqCst) {
+        return Ok(cancelled_result());
+    }
     // O primeiro token pode demorar enquanto o Ollama carrega o modelo na VRAM.
     let agent = ollama_agent(Duration::from_secs(300));
     let capabilities = model_capabilities(&agent, model)?;
@@ -1112,6 +1151,10 @@ fn run_chat(
         .post(&format!("{OLLAMA_URL}/api/chat"))
         .send_json(body)
         .map_err(ollama_error)?;
+    // Cancelado enquanto o modelo carregava: fecha a conexão sem ler nada (o Ollama para de gerar).
+    if cancel.load(Ordering::SeqCst) {
+        return Ok(cancelled_result());
+    }
 
     let mut result = OllamaChatResult {
         model: model.to_string(),
@@ -1155,7 +1198,7 @@ fn run_chat(
         let chunk: ChatChunk = serde_json::from_str(&line)
             .map_err(|error| format!("Resposta inválida do Ollama: {error}"))?;
         if let Some(error) = chunk.error {
-            return Err(error);
+            return Err(explain_ollama_error(error));
         }
         if !chunk.message.thinking.is_empty() {
             result.thinking_tokens += 1;
@@ -1207,12 +1250,7 @@ async fn ollama_chat(
         return Err(QA_OLLAMA_BLOCKED.into());
     }
     let options = options.unwrap_or_default();
-    let cancel = Arc::new(AtomicBool::new(false));
-    app.state::<AppState>()
-        .ollama_chats
-        .lock()
-        .map_err(|_| "estado do chat indisponível")?
-        .insert(request_id.clone(), cancel.clone());
+    let cancel = register_chat(&app, &request_id)?;
     let worker_app = app.clone();
     let worker_request = request_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -1248,12 +1286,7 @@ async fn cloud_chat(
     if is_qa_app(&app) {
         return Err("Modo QA offline: provedores em nuvem não são acessados.".into());
     }
-    let cancel = Arc::new(AtomicBool::new(false));
-    app.state::<AppState>()
-        .ollama_chats
-        .lock()
-        .map_err(|_| "estado do chat indisponível")?
-        .insert(request_id.clone(), cancel.clone());
+    let cancel = register_chat(&app, &request_id)?;
     let worker_app = app.clone();
     let worker_request = request_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -1277,12 +1310,7 @@ async fn bitnet_chat(
     if is_qa_app(&app) {
         return Err(QA_OLLAMA_BLOCKED.into());
     }
-    let cancel = Arc::new(AtomicBool::new(false));
-    app.state::<AppState>()
-        .ollama_chats
-        .lock()
-        .map_err(|_| "estado do chat indisponível")?
-        .insert(request_id.clone(), cancel.clone());
+    let cancel = register_chat(&app, &request_id)?;
     let worker_app = app.clone();
     let worker_request = request_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -1296,17 +1324,30 @@ async fn bitnet_chat(
     result?
 }
 
-/// Sinaliza o cancelamento de uma geração (Ollama ou BitNet) pelo id da requisição.
+/// Registra o sinal de interrupção de uma geração. Se o cancelamento chegou antes (a pessoa clicou
+/// em Parar enquanto o app ainda preparava o pedido), o sinal já nasce ligado.
+fn register_chat(app: &AppHandle, request_id: &str) -> Result<Arc<AtomicBool>, String> {
+    let state = app.state::<AppState>();
+    let mut chats = state
+        .ollama_chats
+        .lock()
+        .map_err(|_| "estado do chat indisponível")?;
+    Ok(chats
+        .entry(request_id.to_string())
+        .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+        .clone())
+}
+
+/// Sinaliza o cancelamento de uma geração (Ollama, nuvem ou BitNet) pelo id da requisição.
 #[tauri::command]
 fn ollama_cancel_chat(state: State<AppState>, request_id: String) -> Result<(), String> {
-    if let Some(cancel) = state
+    state
         .ollama_chats
         .lock()
         .map_err(|_| "estado do chat indisponível")?
-        .get(&request_id)
-    {
-        cancel.store(true, Ordering::SeqCst);
-    }
+        .entry(request_id)
+        .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+        .store(true, Ordering::SeqCst);
     Ok(())
 }
 
@@ -1507,7 +1548,12 @@ fn start_runtime(app: AppHandle, component: String) -> Result<String, String> {
         .ok_or_else(|| format!("{executable} não encontrado no sistema."))?;
 
     if component.to_lowercase() == "ollama" {
-        Command::new(&binary)
+        let mut serve = Command::new(&binary);
+        // Modelos movidos para outro disco: o Ollama precisa saber onde estão.
+        if let Some(models) = storage::ollama_models_env() {
+            serve.env("OLLAMA_MODELS", models);
+        }
+        serve
             .arg("serve")
             .creation_flags(0x08000000)
             .spawn()
@@ -1534,15 +1580,31 @@ fn app_ready(app: AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Uma janela só: abrir o app de novo traz a janela que já existe (duas cópias dobram a memória).
+    // Testes E2E rodam uma cópia ao lado da do usuário com OPEN_ASSISTANT_MULTI_INSTANCE=1.
+    let builder = if env::var_os("OPEN_ASSISTANT_MULTI_INSTANCE").is_some() {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+    };
+    builder
         .manage(AppState::default())
         .manage(tools::ToolsState::default())
+        .manage(imagegen::ImageState::default())
         .manage(speech::SpeechState::default())
         .manage(bitnet::BitnetState::default())
         .manage(computer::ComputerState::default())
         .manage(mcp::McpState::default())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            logs::init(app.handle());
             // Apps do menu Iniciar para o reconhecimento rápido ("abre o word") sem esperar o 1º pedido.
             let handle = app.handle().clone();
             std::thread::spawn(move || semantic::warm_up(&handle));
@@ -1573,6 +1635,12 @@ pub fn run() {
             cloud_chat,
             tools::tools_status,
             tools::tool_install,
+            imagegen::image_generate,
+            imagegen::image_cancel,
+            imagegen::image_read,
+            imagegen::image_reveal,
+            storage::storage_overview,
+            storage::storage_move,
             tools::tool_cancel,
             tools::tool_remove,
             speech::asr_transcribe,
@@ -1584,6 +1652,38 @@ pub fn run() {
             agent::read_skill,
             agent::agent_tool,
             agent::agent_finish,
+            computer::robot_set_home,
+            computer::robot_cursor_ready,
+            choreo::robot_set_speed,
+            changes::changes_summary,
+            logs::logs_read,
+            logs::logs_write,
+            logs::logs_clear,
+            logs::logs_folder,
+            resources::system_status,
+            resources::free_memory,
+            resources::restart_memory_hog,
+            files::fs_list,
+            files::fs_read,
+            files::fs_git_status,
+            files::fs_pick_folder,
+            files::fs_reveal,
+            files::fs_open,
+            files::app_data_dir,
+            changes::changes_undo,
+            workflow::wf_known_folders,
+            workflow::wf_list_files,
+            workflow::wf_read_file,
+            workflow::wf_write_file,
+            workflow::wf_copy_file,
+            workflow::wf_http,
+            workflow::wf_open_url,
+            workflow::wf_notify,
+            workflow::cloud_status,
+            workflow::cloud_connect,
+            workflow::cloud_list,
+            workflow::cloud_download,
+            workflow::cloud_upload,
             mcp::mcp_overview,
             mcp::mcp_save_config,
             mcp::mcp_start,
@@ -1695,6 +1795,7 @@ mod tests {
             Some("model 'x' not found")
         );
         assert_eq!(ollama_error_body("not json"), None);
+        assert!(ollama_error_body(r#"{"error":"memory layout cannot be allocated"}"#).unwrap().starts_with("O modelo não coube na memória"));
     }
 
     fn layer(digest: &str, total: u64, completed: u64) -> PullLine {

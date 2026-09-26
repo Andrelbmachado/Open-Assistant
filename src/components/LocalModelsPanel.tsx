@@ -7,6 +7,8 @@ import { dismissPull, refreshInstalledModels, scanHardware, startOllama, startPu
 import { buildLocalModelOptions, formatBytes, OLLAMA_MODEL_PREFIX, type LocalModelOption } from "../utils/localCatalog";
 import { describePull, type LocalModelOperation, type PullProgress } from "../utils/localOperation";
 import { isQAOffline } from "../utils/qaMode";
+import { ImageModelsSection } from "./ImageModelsSection";
+import { StoragePanel } from "./StoragePanel";
 
 interface RuntimeStatus { component: string; installed: boolean; running: boolean; version?: string }
 
@@ -140,6 +142,7 @@ export function LocalModelsPanel() {
       {local.ollama === "offline" && runtime?.installed === false && <button className="primary-button" onClick={installOllama}><Download size={13} />Instalar Ollama</button>}
     </div>
     {installMessage && <p className="settings-message">{installMessage}</p>}
+    <StoragePanel />
     <p className="hardware-summary">
       {hardware ? `${gpu ? `${gpu.name} · ${Math.round(gpu.vramMb / 1024)} GB de VRAM` : "Sem GPU NVIDIA"} · ${Math.round(hardware.ramMb / 1024)} GB de RAM · ${Math.round(hardware.availableDiskMb / 1024)} GB livres`
         : local.hardwareStatus === "failed" ? `Não foi possível ler o hardware: ${local.hardwareError}` : "Lendo GPU, VRAM, RAM e disco…"}
@@ -149,5 +152,6 @@ export function LocalModelsPanel() {
     <h5 className="model-section-title">Disponíveis para este PC <span>{available.length}</span></h5>
     <div className="runtime-list model-list">{available.map(card)}</div>
     {incompatible.length > 0 && <><h5 className="model-section-title">Incompatíveis <span>{incompatible.length}</span></h5><div className="runtime-list model-list">{incompatible.map(card)}</div></>}
+    <ImageModelsSection />
   </>;
 }

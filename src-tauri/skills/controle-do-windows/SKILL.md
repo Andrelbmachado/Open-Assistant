@@ -31,6 +31,35 @@ Por quê: cada print custa ~1000 tokens e deixa o modelo lento; uma lista de ele
 7. Se `look` mostrar uma janela diferente da esperada, use `focus_window` com o nome do app. Nunca feche janelas nem mate processos (Explorer, Chrome…) para "arrumar" a tela.
 8. Para *ler* o conteúdo de um site aberto, `read_url` com o endereço costuma ser mais rápido e completo que prints.
 
+## Diagnosticar erros do próprio app
+
+- `read_logs {"level":"erro","query":"imagem"}` lê os logs do Open Assistant (IA, imagem, voz, memória, agente) e
+  mostra a memória livre agora. Use **antes** de chutar a causa de um erro ("por que a imagem falhou?").
+- "out of memory"/"memory layout cannot be allocated" = memória do Windows esgotada: o log diz quem está segurando
+  (ex.: OneDrive). Sugira o Painel de controle do app (botões Liberar memória / Reiniciar OneDrive).
+
+## Criar e editar arquivos e código
+
+- Ler: `read_file {"path":"C:/Users/voce/projeto/app.py"}` (barra normal: nada de escapar `\` no JSON; vem com número de linha; `offset`/`limit` para arquivos grandes).
+- Trocar um trecho: `edit_file {"path":"...","old_text":"trecho exato","new_text":"novo trecho"}` — copie o trecho do
+  `read_file` **sem** os números de linha; se ele aparecer mais de uma vez, inclua linhas vizinhas (ou `replace_all`).
+- Criar ou reescrever: `write_file {"path":"...","content":"arquivo inteiro"}` (cria as pastas que faltarem).
+- **Nunca** use `Set-Content`, `Out-File`, `>` ou `echo` no `run_command` para mexer em arquivos: com estas ferramentas
+  o app mostra no fim da resposta o que mudou em cada arquivo (+/−, trecho exato) e a pessoa pode **desfazer**.
+- Rodar testes/compilar continua sendo `run_command`.
+
+## Mover arquivos e janelas (mouse virtual — `references/mover-arquivos-e-janelas.md`)
+
+- Ícone/pasta/arquivo da área de trabalho: `move_file {"name":"Nova pasta","place":"cima direita"}` (nomes em `list_windows {"desktop":true}`).
+- Lugar em palavras, nunca pixels: 9 zonas (`cima esquerda` … `baixo direita`, `centro`), `outro lado`, `"70% 30%"`,
+  `"um pouco para cima"`, `"ao lado de <nome>"` — tabela em `references/posicoes_na_tela.md`.
+- Guardar dentro de uma pasta da área de trabalho: `move_file {"name":"foto.png","into":"Fotos"}`.
+- Uma chamada já faz o robô inteiro (andar, girar de frente, pegar, girar de lado, carregar, soltar), na velocidade
+  do usuário: estados e tempos em `references/movimento_robo.md`.
+- Janela: `move_window {"query":"chrome","place":"direita"}` (metade da tela, maximizar, outro monitor ou qualquer zona).
+- Abrir item da área de trabalho: `open_file {"name":"..."}`.
+- Nunca use print + `drag` para isso: o app sabe o retângulo exato de cada janela e ícone e acerta de primeira.
+
 ## Abrir programas, sites e vídeos (exemplos reais: `references/abrir-programas.md`)
 
 - Programa: `run_intent open_app {"app":"chrome"}` (também `notepad`, `calc`, `winword`, `excel`, `mspaint`, `taskmgr`,
@@ -59,6 +88,9 @@ Detalhes do Chrome (abas, perfis, DevTools, MCP): `references/chrome.md`.
 |---|---|
 | `catalogo/INDEX.md` | lista de intents com risco (sempre útil no primeiro pedido de ação) |
 | `references/abrir-programas.md` | como abrir qualquer programa, site, vídeo do YouTube, pasta ou tela de configuração |
+| `references/mover-arquivos-e-janelas.md` | mover ícones da área de trabalho e janelas (lugares, receitas) |
+| `references/posicoes_na_tela.md` | mapa da tela: 9 zonas, porcentagem, relativo, "ao lado de" (frase do usuário → `place`) |
+| `references/node-editor.md` | criar workflows no editor de nodes (automações, agendamentos, Google Drive) |
 | `references/comandos-windows.md` | comandos cmd/PowerShell por tarefa (arquivos, processos, rede, winget, serviços, registro) |
 | `references/chrome.md` | controlar o Chrome e sites |
 | `references/automacao.md` | scripts automatizadores: tarefas agendadas, AutoHotkey, lotes |

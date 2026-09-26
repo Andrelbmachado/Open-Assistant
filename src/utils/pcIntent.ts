@@ -3,6 +3,8 @@
  * agente que controla o PC, sem gastar uma resposta do modelo para decidir isso.
  */
 
+import { parseMoveIntent } from "./moveIntent";
+
 const normalize = (text: string) => text.toLocaleLowerCase("pt-BR").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 
 const QUESTION = /^(como|qual|quais|o que|oque|por que|porque|quando|onde|quem|quanto|quantos|sera|explica|explique|me explica|me fala|fala sobre|o que e|what|how|why|voce sabe|sabe)\b/;
@@ -16,5 +18,5 @@ export function looksLikePcAction(text: string): boolean {
   const plain = normalize(firstLine).replace(POLITE, "");
   if (!plain || plain.split(" ").length > 30) return false;
   if (QUESTION.test(plain)) return false;
-  return ACTION.test(plain);
+  return ACTION.test(plain) || Boolean(parseMoveIntent(firstLine));
 }

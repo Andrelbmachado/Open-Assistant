@@ -3,6 +3,10 @@ export type ViewKind = "chat" | "workflow" | "terminal" | "agents" | "marketplac
 export interface WorkspaceArea {
   id: string;
   view: ViewKind;
+  /** Conversa mostrada por esta área de chat; cada área de chat tem a sua. */
+  chatId?: string;
+  /** Workflow mostrado por esta área do editor de nodes; cada área tem o seu (trocar numa não muda a outra). */
+  workflowId?: string;
 }
 
 export interface WorkspaceSplit {
@@ -64,7 +68,7 @@ function validateWorkspaceLayout(node: unknown, ids: Set<string>): node is Works
   if (ids.has(value.id)) return false;
   ids.add(value.id);
 
-  if ("view" in value) return typeof value.view === "string" && VIEW_KINDS.has(value.view as ViewKind);
+  if ("view" in value) return typeof value.view === "string" && VIEW_KINDS.has(value.view as ViewKind) && (value.chatId === undefined || typeof value.chatId === "string") && (value.workflowId === undefined || typeof value.workflowId === "string");
 
   return (value.axis === "horizontal" || value.axis === "vertical")
     && typeof value.fraction === "number"
@@ -73,4 +77,72 @@ function validateWorkspaceLayout(node: unknown, ids: Set<string>): node is Works
     && value.fraction < 1
     && validateWorkspaceLayout(value.first, ids)
     && validateWorkspaceLayout(value.second, ids);
+}
+
+/** Áreas na ordem da árvore (esquerda/cima primeiro). */
+export function listAreas(node: WorkspaceLayoutNode): WorkspaceArea[] {
+  return "view" in node ? [node] : [...listAreas(node.first), ...listAreas(node.second)];
+}
+
+/** Troca a conversa de uma área. */
+export function setAreaChat(node: WorkspaceLayoutNode, id: string, chatId: string | undefined): WorkspaceLayoutNode {
+  if ("view" in node) return node.id === id ? { ...node, chatId } : node;
+  return { ...node, first: setAreaChat(node.first, id, chatId), second: setAreaChat(node.second, id, chatId) };
+}
+
+/**
+ * Garante que cada área de chat mostre uma conversa própria (sem janelas duplicadas):
+ * a área ativa mostra `activeChatId`; as outras mantêm a sua ou ganham uma conversa nova (`createChat`).
+ */
+export function assignChatAreas(layout: WorkspaceLayoutNode, activeAreaId: string, activeChatId: string, chatIds: ReadonlySet<string>, createChat: () => string): WorkspaceLayoutNode {
+  const areas = listAreas(layout).filter((area) => area.view === "chat");
+  const ordered = [...areas.filter((area) => area.id === activeAreaId), ...areas.filter((area) => area.id !== activeAreaId)];
+  const used = new Set<string>();
+  let next = layout;
+  for (const area of ordered) {
+    const wanted = area.id === activeAreaId && chatIds.has(activeChatId) ? activeChatId : area.chatId;
+    const chatId = wanted && chatIds.has(wanted) && !used.has(wanted) ? wanted : createChat();
+    used.add(chatId);
+    if (area.chatId !== chatId) next = setAreaChat(next, area.id, chatId);
+  }
+  return next;
+}
+
+/** Troca o workflow de uma área do editor de nodes. */
+export function setAreaWorkflow(node: WorkspaceLayoutNode, id: string, workflowId: string | undefined): WorkspaceLayoutNode {
+  if ("view" in node) return node.id === id ? { ...node, workflowId } : node;
+  return { ...node, first: setAreaWorkflow(node.first, id, workflowId), second: setAreaWorkflow(node.second, id, workflowId) };
+}
+
+/**
+ * Ao abrir o app: áreas de nodes sem workflow (ou com um que não existe mais) adotam os workflows salvos
+ * que nenhuma área mostra — é assim que o canvas antigo migrado aparece na área que já existia.
+ */
+export function adoptWorkflows(layout: WorkspaceLayoutNode, workflowIds: string[]): WorkspaceLayoutNode {
+  const shown = new Set(listAreas(layout).map((area) => area.workflowId).filter((id): id is string => Boolean(id && workflowIds.includes(id))));
+  const orphans = workflowIds.filter((id) => !shown.has(id));
+  let next = layout;
+  for (const area of listAreas(layout).filter((item) => item.view === "workflow")) {
+    if (area.workflowId && workflowIds.includes(area.workflowId)) continue;
+    const adopted = orphans.shift();
+    if (!adopted) break;
+    next = setAreaWorkflow(next, area.id, adopted);
+  }
+  return next;
+}
+
+/**
+ * Cada área do editor de nodes mostra um workflow próprio: mantém o que já tinha (se ainda existe e não
+ * está em outra área) ou ganha um novo (`createWorkflow`). Dividir uma área de nodes = workflow novo.
+ */
+export function assignWorkflowAreas(layout: WorkspaceLayoutNode, workflowIds: ReadonlySet<string>, createWorkflow: () => string): WorkspaceLayoutNode {
+  const used = new Set<string>();
+  let next = layout;
+  for (const area of listAreas(layout).filter((item) => item.view === "workflow")) {
+    const keep = area.workflowId && workflowIds.has(area.workflowId) && !used.has(area.workflowId) ? area.workflowId : undefined;
+    const workflowId = keep ?? createWorkflow();
+    used.add(workflowId);
+    if (area.workflowId !== workflowId) next = setAreaWorkflow(next, area.id, workflowId);
+  }
+  return next;
 }

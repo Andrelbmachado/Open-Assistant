@@ -37,13 +37,13 @@ export function formatTokenCount(tokens: number): string {
   return `${(tokens / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}k`;
 }
 
-const THINKING_VERBS = ["Pensando", "Raciocinando", "Refletindo", "Ponderando", "Analisando", "Elaborando", "Conectando ideias", "Destrinchando", "Matutando", "Tecendo a resposta"];
+export const THINKING_VERBS = ["Pensando", "Raciocinando", "Refletindo", "Ponderando", "Analisando", "Elaborando", "Conectando ideias", "Destrinchando", "Matutando", "Rachando a cuca", "Tecendo a resposta"];
 
-/** Verbo estável por mensagem, como o spinner do Claude Code. */
-export function thinkingVerb(seed: string): string {
+/** Verbo estável por mensagem, como o spinner do Claude Code; `shift` anda para o próximo da lista. */
+export function thinkingVerb(seed: string, shift = 0): string {
   let hash = 0;
   for (const char of seed) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return THINKING_VERBS[hash % THINKING_VERBS.length];
+  return THINKING_VERBS[(hash + shift) % THINKING_VERBS.length];
 }
 
 /** Estimativa usada quando o backend não informa a contagem real (~4 caracteres por token). */

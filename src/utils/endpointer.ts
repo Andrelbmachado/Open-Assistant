@@ -18,6 +18,9 @@ export type EndpointEvent = "none" | "speech-start" | "speech-end" | "no-speech"
 /** Tempos padrão do modo voz. */
 export const DEFAULT_ENDPOINTER: EndpointerOptions = { silenceMs: 900, noSpeechMs: 8000, maxMs: 30000, minSpeechMs: 150 };
 
+/** Ditado no compositor: tolera pausas para pensar e frases longas. */
+export const DICTATION_ENDPOINTER: EndpointerOptions = { silenceMs: 2200, noSpeechMs: 10000, maxMs: 90000, minSpeechMs: 150 };
+
 const MIN_THRESHOLD = 0.012;
 
 /** Máquina de estados de início/fim de fala; alimente com `push(rms, ms)` a cada bloco. */
@@ -29,7 +32,10 @@ export class Endpointer {
   private started = false;
   private finished = false;
 
-  constructor(private readonly options: EndpointerOptions = DEFAULT_ENDPOINTER) {}
+  /** `alreadySpeaking`: a fala já começou (ex.: a pessoa interrompeu o robô); só espera o fim. */
+  constructor(private readonly options: EndpointerOptions = DEFAULT_ENDPOINTER, alreadySpeaking = false) {
+    this.started = alreadySpeaking;
+  }
 
   get speaking(): boolean { return this.started && !this.finished; }
 

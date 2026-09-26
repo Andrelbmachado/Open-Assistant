@@ -35,6 +35,13 @@ export function describeMicError(error: unknown): string {
 
 const TARGET_RATE = 16000;
 
+function concat(chunks: Float32Array[]): Float32Array {
+  const samples = new Float32Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) { samples.set(chunk, offset); offset += chunk.length; }
+  return samples;
+}
+
 /**
  * Captura do microfone em mono 16 kHz (o sherpa-onnx reamostra se o WebView2 recusar
  * a taxa pedida) e para sozinha quando a pessoa termina de falar.
@@ -88,6 +95,28 @@ export class VoiceCapture {
     if (context.state === "suspended") await context.resume().catch(() => undefined);
   }
 
+  /** Áudio gravado até agora, sem parar a captura (transcrição ao vivo do ditado). */
+  snapshot(): CaptureResult | null {
+    if (!this.context) return null;
+    return { samples: concat(this.chunks), sampleRate: this.context.sampleRate, reason: "stopped" };
+  }
+
+  /**
+   * Continua a mesma captura com outro papel: guarda só os últimos `keepMs` de áudio (o começo da
+   * fala que interrompeu o robô) e passa a esperar o fim dessa fala com os novos callbacks.
+   */
+  retarget(callbacks: CaptureCallbacks, options: EndpointerOptions = DEFAULT_ENDPOINTER, keepMs = 900): boolean {
+    const context = this.context;
+    if (!context) return false;
+    let keep = Math.round(context.sampleRate * keepMs / 1000);
+    const kept: Float32Array[] = [];
+    for (let index = this.chunks.length - 1; index >= 0 && keep > 0; index--) { kept.unshift(this.chunks[index]); keep -= this.chunks[index].length; }
+    this.chunks = kept;
+    this.callbacks = callbacks;
+    this.endpointer = new Endpointer(options, true);
+    return true;
+  }
+
   /** Encerra a captura; com `notify`, entrega o áudio gravado em `onFinish`. */
   stop(reason: CaptureResult["reason"] = "stopped", notify = true) {
     const context = this.context;
@@ -101,10 +130,7 @@ export class VoiceCapture {
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
     void context.close().catch(() => undefined);
-    const length = this.chunks.reduce((total, chunk) => total + chunk.length, 0);
-    const samples = new Float32Array(length);
-    let offset = 0;
-    for (const chunk of this.chunks) { samples.set(chunk, offset); offset += chunk.length; }
+    const samples = concat(this.chunks);
     this.chunks = [];
     callbacks?.onLevel?.(0);
     if (notify) callbacks?.onFinish({ samples, sampleRate, reason });

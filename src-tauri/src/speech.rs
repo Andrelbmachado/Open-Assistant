@@ -24,6 +24,8 @@ pub struct SpeechState {
     runtime_loaded: Mutex<bool>,
     recognizer: Mutex<Option<(String, OfflineRecognizer)>>,
     tts: Mutex<Option<(String, OfflineTts)>>,
+    /// Último uso de voz (reconhecer ou falar): modelos parados há mais de 1 min podem ser soltos.
+    last_use: Mutex<Option<std::time::Instant>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -159,6 +161,7 @@ fn transcribe(app: &AppHandle, model_id: &str, language: &str, sample_rate: i32,
     let kind = asr_kind(model_id).ok_or_else(|| format!("Modelo de reconhecimento desconhecido: {model_id}"))?;
     ensure_runtime(app)?;
     let state = app.state::<SpeechState>();
+    touch(&state);
     let mut slot = state.recognizer.lock().map_err(|_| "estado da voz indisponível")?;
     let key = format!("{model_id}:{language}");
     if slot.as_ref().map(|(loaded, _)| loaded != &key).unwrap_or(true) {
@@ -204,6 +207,7 @@ fn synthesize(app: &AppHandle, voice_id: &str, text: &str, speed: f32) -> Result
     }
     ensure_runtime(app)?;
     let state = app.state::<SpeechState>();
+    touch(&state);
     let mut slot = state.tts.lock().map_err(|_| "estado da voz indisponível")?;
     if slot.as_ref().map(|(loaded, _)| loaded != voice_id).unwrap_or(true) {
         *slot = None;
@@ -219,6 +223,29 @@ fn synthesize(app: &AppHandle, voice_id: &str, text: &str, speed: f32) -> Result
         .generate_with_config::<fn(&[f32], f32) -> bool>(&clean, &config, None)
         .ok_or("A síntese de voz falhou.")?;
     Ok(wav_bytes(audio.samples(), audio.sample_rate().max(1) as u32))
+}
+
+fn touch(state: &SpeechState) {
+    if let Ok(mut last) = state.last_use.lock() {
+        *last = Some(std::time::Instant::now());
+    }
+}
+
+/// Solta os modelos de voz se ninguém falou há mais de 1 min (voltam sozinhos no próximo uso).
+pub fn release_idle(app: &AppHandle) -> bool {
+    let state = app.state::<SpeechState>();
+    let idle = state.last_use.lock().map(|last| last.is_none_or(|time| time.elapsed().as_secs() > 60)).unwrap_or(false);
+    if !idle {
+        return false;
+    }
+    let mut freed = false;
+    if let Ok(mut slot) = state.recognizer.lock() {
+        freed |= slot.take().is_some();
+    }
+    if let Ok(mut slot) = state.tts.lock() {
+        freed |= slot.take().is_some();
+    }
+    freed
 }
 
 /// Libera o modelo carregado antes de apagar os arquivos dele.

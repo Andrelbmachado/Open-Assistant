@@ -1,3 +1,4 @@
+import { WorkflowService } from "./components/WorkflowService";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect } from "react";
 import "./App.css";
@@ -10,8 +11,10 @@ import { useStore } from "./store/store";
 import { useMemoryFileSync } from "./store/memoryFile";
 
 export default function App() {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   useMemoryFileSync();
+  // O robô-mouse anda na velocidade escolhida no menu "+" (o Rust guarda para a próxima tarefa).
+  useEffect(() => { invoke("robot_set_speed", { speed: state.robotSpeed }).catch(() => undefined); }, [state.robotSpeed]);
   useEffect(() => {
     invoke("app_ready").catch(() => undefined);
     const shortcuts = (event: KeyboardEvent) => {
@@ -21,5 +24,5 @@ export default function App() {
     window.addEventListener("keydown", shortcuts);
     return () => window.removeEventListener("keydown", shortcuts);
   }, [dispatch]);
-  return <div className="app-shell"><TitleBar /><div className="app-body"><Sidebar /><Workspace /></div><SettingsView /><CommandPalette /></div>;
+  return <div className="app-shell"><TitleBar /><div className="app-body"><Sidebar /><Workspace /></div><SettingsView /><CommandPalette /><WorkflowService /></div>;
 }

@@ -23,4 +23,14 @@ describe("robot expression", () => {
     expect(robotPose("speaking", "shouting").mouthAmp).toBeGreaterThan(robotPose("speaking", "whisper").mouthAmp);
     expect(robotPose("speaking", "fast").syllableHz).toBeGreaterThan(robotPose("speaking", "calm").syllableHz);
   });
+
+  it("bravo solta mais partículas, vermelhas, rápidas e aleatórias", () => {
+    const angry = robotPose("speaking", "angry");
+    const talking = robotPose("speaking", "talking");
+    expect(angry.particles).toBeGreaterThan(talking.particles);
+    expect(angry.particleTint).toBe(1);
+    expect(angry.particleColor[0]).toBeGreaterThan(angry.particleColor[1] * 3);
+    expect(angry.particleSpeed).toBeGreaterThan(talking.particleSpeed);
+    expect(angry.particleChaos).toBeGreaterThan(talking.particleChaos);
+  });
 });

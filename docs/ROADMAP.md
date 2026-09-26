@@ -126,6 +126,39 @@ Resumo do que foi feito está em "Resultados verificados (sessão 3)" abaixo; o 
   Resposta de teste: "Olá, André!".
 - [x] "Pensando" antes do Pac-Man, sem reticências; texto +10 %, Pac-Man −10 %.
 
+## 10. Robô andando com pastas e janelas + ajustes (sessão 6, 2026-09-26) — concluído
+- [x] Coreografia nova (`choreo.rs`): anda até o objeto (de lado / de costas subindo a tela / de frente descendo), gira
+  de frente para o usuário, pega, gira de lado para o destino, anda carregando, gira de frente e solta. Visor de
+  perfil (`u_side`) e de costas (`u_back`, respiros no lugar do rosto) no shader do rosto.
+- [x] Velocidade escolhida pelo usuário (+ › Velocidade do robô, padrão "Devagar" 150 px/s; `robot_set_speed`) e por
+  chamada (`speed`: devagar/normal/rapido). Caminho `natural` (arco leve ≤ 34 px + balanço mínimo) ou `reto`.
+  Andar com rampa suave sem tranco (`walk_profile`) e sobe-e-desce a cada passo de 46 px (`AgentCursor`).
+- [x] Ícone da área de trabalho: o Explorer deste build **não repinta** ícones reposicionados em sequência (testado:
+  16 ms e até 130 ms entre passos). Agora o robô carrega uma imagem do ícone (a do Explorer, via
+  `IShellItemImageFactory`) presa nas mãos a 60 fps, o original fica no lugar como num arrasto do Windows e o ícone
+  real vai para o destino ao soltar (mãos acompanham o "Alinhar à grade").
+- [x] Bug achado: `UIAutomation::new()` falhava em thread STA (desktop.rs) e os retângulos dos ícones eram chutados
+  (76×93 em vez de 75×65, deslocados 16 px). `computer::automation()` usa o COM já iniciado.
+- [x] Janela: segura num trecho livre da barra de título (`WM_NCHITTEST` = HTCAPTION; barras próprias como Explorador
+  com abas e apps WebView → vãos entre botões/abas pelo UI Automation). Perto do topo da tela o robô segura de lado.
+- [x] Mapa da tela para modelos pequenos (`places.rs` + `skills/mover-arquivos-e-janelas/posicoes_na_tela.md`): 9 zonas,
+  "zona 1–9", "70% 30%", "um pouco para cima", "200 px para a direita", "ao lado de X"; `list_windows` mostra a zona
+  e a % de cada janela/ícone. O caminho rápido sem modelo (`moveIntent.ts`) entende as mesmas frases + "devagar"/"em linha reta".
+- [x] Logs: `move_window` numa pasta → vira `move_file`; "Abertas: ." → mensagem clara; `new_folder` sem `path`
+  (nome em `name`) e caminho relativo → Área de Trabalho; lote de chamadas do modelo para no primeiro erro (eram 23 `drag`).
+- [x] Compositor: cadeado fechado/aberto nas pontas do slider de acesso; "Total (age sozinho)" → "Acesso total".
+- [x] Modo voz: sem ondas no campo; a fala aparece no chat enquanto a pessoa fala (bolha provisória) e vira o prompt.
+- [x] Prévia de imagem: brilho colado na borda arredondada (magenta/violeta/azul/ciano) girando, respirando e se
+  misturando em dois anéis; halo curto para fora e brilho curto para dentro.
+- [x] Slider de esforço "Quadrados" anda para a esquerda (medido: −3 px a cada 60 ms).
+- Verificado no exe (CDP): mover "teste mover" para meio direita / cima centro / volta (linha do tempo dos 13 estados e
+  prints), Calculadora para cima direita e baixo esquerda, menu +, brilho, quadrados e voz com microfone falso.
+
+## Próximos passos sugeridos (sessão 7)
+- "Alinhar à grade": escolher o destino já na célula livre mais perto (hoje o ícone pode encaixar uma célula ao lado).
+- Robô de costas: hoje só o visor some; dá para desenhar as mãos atrás do corpo quando ele sobe a tela.
+- Testar `move_window` com Chrome/Explorador reais pelo agente com qwen3.5:9b (o caminho rápido e a ferramenta já testados).
+
 ## Próximos passos sugeridos (sessão 5)
 - Testar Gemini/OpenAI/Anthropic com chave real (o código segue o formato oficial, mas não há chave salva para testar).
 - Camada semântica com modelo de embedding de verdade (ex.: `embeddinggemma`/`nomic-embed-text` no Ollama, na CPU) como

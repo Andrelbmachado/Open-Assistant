@@ -6,8 +6,12 @@ import "./blender.css";
 import "./workspace-fixes.css";
 import "./refined.css";
 import "./refresh.css";
+import "./polish.css";
 
 import { AgentCursor } from "./components/AgentCursor";
+import { installGlobalErrorLog } from "./utils/appLog";
+
+installGlobalErrorLog();
 
 // A mesma página serve a janela do cursor próprio do agente (`index.html#agent-cursor`, criada por computer.rs).
 const isCursorWindow = window.location.hash === "#agent-cursor";

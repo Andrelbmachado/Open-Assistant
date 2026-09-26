@@ -14,6 +14,9 @@ import { EFFORT_INFO, type EffortLevel } from "./effort";
 import { ollamaModelId } from "./aiService";
 import { BITNET_MODEL_PREFIX } from "./localCatalog";
 import type { ActionCandidate } from "../store/store";
+import { parseMoveIntent } from "./moveIntent";
+import { runWorkflowTool, WORKFLOW_TOOLS } from "./workflowService";
+import { fetchChanges, type ChangeSet } from "./fileChanges";
 
 /** Skill principal do agente (o SKILL.md dela já está no prompt de `agent_prepare`). */
 const SKILL_NAME = "controle-do-windows";
@@ -79,12 +82,16 @@ export interface AgentResult {
   text: string;
   steps: AgentStep[];
   source: string;
+  /** Arquivos que a IA alterou na tarefa (cartão "Editou N arquivos" no fim da resposta). */
+  changes?: ChangeSet;
   tokens?: number;
   tokensPerSecond?: number;
 }
 
 const NUM_CTX = 16384;
 const MAX_TOOL_OUTPUT = 5000;
+
+const fileName = (path: string) => path.replace(/\//g, "\\").split("\\").filter(Boolean).pop() ?? path;
 
 /** Rótulo curto e humano para cada chamada de ferramenta. */
 export function describeToolCall(name: string, args: Record<string, unknown>): string {
@@ -98,6 +105,12 @@ export function describeToolCall(name: string, args: Record<string, unknown>): s
     case "run_command": return `Comando ${text("shell") === "cmd" ? "cmd" : "PowerShell"}: ${short(text("command"))}`;
     case "look": return text("mode") === "elements" || !text("mode") ? "Lendo os elementos da tela" : "Tirando print da tela";
     case "click": return args.element !== undefined ? `Clicando no elemento [${text("element")}]` : `Clicando em (${text("x")}, ${text("y")})`;
+    case "drag": return "Pegando com as mãos e arrastando";
+    case "move_window": return `Levando a janela "${text("query")}"${text("place") ? ` para ${text("place")}` : ""}`;
+    case "move_file": return `Levando "${text("name")}"${text("place") ? ` para ${text("place")}` : ""}`;
+    case "open_file": return `Abrindo "${text("name")}"`;
+    case "desktop_items": return "Lendo os ícones da área de trabalho";
+    case "list_windows": return "Vendo as janelas abertas";
     case "type_text": return `Digitando "${short(text("text"), 50)}"${args.enter ? " + Enter" : ""}`;
     case "press_keys": return `Atalho ${text("keys")}`;
     case "scroll": return `Rolando ${Number(args.amount) < 0 ? "para cima" : "para baixo"}`;
@@ -106,6 +119,9 @@ export function describeToolCall(name: string, args: Record<string, unknown>): s
     case "read_url": return `Lendo ${short(text("url"), 60)}`;
     case "read_skill_file": return `Consultando ${text("path")}`;
     case "ask_user": return "Pergunta para você";
+    case "read_file": return `Lendo ${fileName(text("path"))}`;
+    case "write_file": return `Escrevendo ${fileName(text("path"))}`;
+    case "edit_file": return `Editando ${fileName(text("path"))}`;
     case "mcp_tools": return `Consultando as ferramentas de ${text("server")}`;
     case "mcp_call": return `Conector ${text("server")} · ${text("tool")}`;
     default: return name.startsWith("mcp__") ? `Conector ${name.split("__")[1]} · ${name.split("__").slice(2).join("__")}` : name;
@@ -201,14 +217,23 @@ export async function runCatalogAction(candidate: ActionCandidate, options: Pick
   }
 }
 
-async function callTool(name: string, args: Record<string, unknown>, access: AccessMode, confirmed: boolean): Promise<ToolOutcome> {
-  return invoke<ToolOutcome>("agent_tool", { name, args, access, confirmed });
+/** `task` = id do pedido: o Rust junta as alterações de arquivos desta tarefa. */
+async function callTool(name: string, args: Record<string, unknown>, access: AccessMode, confirmed: boolean, task?: string): Promise<ToolOutcome> {
+  return invoke<ToolOutcome>("agent_tool", { name, args, access, confirmed, task });
 }
 
 /** Executa uma ferramenta com a política do Rust, perguntando ao usuário quando preciso. */
 async function runStep(step: AgentStep, state: { access: AccessMode }, options: AgentRunOptions): Promise<ToolOutcome> {
   options.onStep({ ...step });
-  let outcome = await callTool(step.tool, step.args, state.access, false);
+  // Ferramentas do editor de nodes rodam aqui no app (o workflow mora no estado da interface).
+  if (step.tool.startsWith("workflow_")) {
+    const outcome = await runWorkflowTool(step.tool, step.args);
+    step.status = outcome.status;
+    step.output = clip(outcome.text, 1200);
+    options.onStep({ ...step });
+    return outcome;
+  }
+  let outcome = await callTool(step.tool, step.args, state.access, false, options.requestId);
   if (outcome.status === "needs_confirm") {
     step.status = "waiting";
     step.reason = outcome.reason;
@@ -216,8 +241,8 @@ async function runStep(step: AgentStep, state: { access: AccessMode }, options: 
     const answer = await options.confirm({ ...step });
     if (answer === "always") state.access = "Automático";
     outcome = answer === "deny"
-      ? { status: "denied", text: "O usuário não permitiu esta ação. Pergunte o que ele prefere ou siga outro caminho." }
-      : await callTool(step.tool, step.args, state.access, true);
+      ? { status: "denied", reason: "você não permitiu esta ação.", text: "O usuário não permitiu esta ação. Pergunte o que ele prefere ou siga outro caminho." }
+      : await callTool(step.tool, step.args, state.access, true, options.requestId);
   }
   step.status = outcome.status === "ok" ? "ok" : outcome.status === "denied" ? "denied" : "error";
   step.output = clip(outcome.text, 1200);
@@ -228,6 +253,13 @@ async function runStep(step: AgentStep, state: { access: AccessMode }, options: 
 
 /** Executa um pedido do usuário no modo agente; veja o comentário do módulo. */
 export async function runAgent(options: AgentRunOptions): Promise<AgentResult> {
+  const result = await runAgentTask(options);
+  // No fim do raciocínio e das ações: o que mudou nos arquivos (como no Claude Code).
+  const changes = await fetchChanges(options.requestId);
+  return changes ? { ...result, changes } : result;
+}
+
+async function runAgentTask(options: AgentRunOptions): Promise<AgentResult> {
   const steps: AgentStep[] = [];
   const state = { access: options.access };
   const track = (step: AgentStep) => { const index = steps.findIndex((item) => item.id === step.id); if (index >= 0) steps[index] = step; else steps.push(step); };
@@ -236,6 +268,25 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentResult> {
 
   let hint = "";
   try {
+    // 0. Mover arquivo/janela ("mova a pasta X para o outro lado"): o robô pega direto, sem modelo.
+    const move = !options.images?.length && !options.mcpServer ? parseMoveIntent(options.userText) : undefined;
+    if (move) {
+      const attempt = async (kind: "file" | "window") => {
+        const tool = kind === "file" ? "move_file" : "move_window";
+        const gait = { ...(move.speed ? { speed: move.speed } : {}), ...(move.path ? { path: move.path } : {}) };
+        const args = kind === "file" ? { name: move.target, place: move.place, ...gait } : { query: move.target, place: move.place, ...gait };
+        const step: AgentStep = { id: crypto.randomUUID(), tool, args, label: describeToolCall(tool, args), status: "running" };
+        return runStep(step, state, wrapped);
+      };
+      let outcome = await attempt(move.kind);
+      // "leve o spotify para a direita": não há ícone com esse nome, mas há uma janela.
+      if (outcome.status === "error" && move.kind === "file" && /^Não há /.test(outcome.text)) outcome = await attempt("window");
+      if (outcome.status === "ok") return { text: `Pronto. ${outcome.text}`, steps, source: "Robô (mouse virtual)" };
+      if (outcome.status === "denied") return { text: `Não mexi: ${outcome.reason ?? outcome.text}`, steps, source: "Robô (mouse virtual)" };
+      hint = `
+
+(O app tentou mover "${move.target}" para ${move.place} e falhou: ${outcome.text}. Resolva com desktop_items/list_windows e move_file/move_window.)`;
+    }
     // 1. Caminho rápido pelo catálogo (sem imagem anexada, porque aí o pedido é sobre a imagem;
     //    nem com "@conector", porque aí o usuário escolheu a ferramenta).
     if (!options.images?.length && !options.mcpServer) {
@@ -276,6 +327,8 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentResult> {
       const skillText = await invoke<string>("read_skill", { name: options.skill }).catch(() => "");
       focus = `\n\n## Skill /${options.skill} (pedida pelo usuário — siga à risca)\n${skillText}`;
     }
+    // Editor de nodes: a IA ganha as ferramentas workflow_* (criar, listar, rodar).
+    if (options.skill === "node-editor") tools = [...tools, ...WORKFLOW_TOOLS];
     let messages: AgentMessage[] = [
       { role: "system", content: `${setup.systemPrompt}${focus}${options.memory ?? ""}` },
       ...options.history.slice(-8).map((item) => ({ role: item.role, content: clip(item.content, 2000) })),
@@ -299,9 +352,16 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentResult> {
         return { text: last.content.trim() || "Pronto.", steps, source: `Agente · Ollama (${modelId})`, tokens: last.evalCount ?? undefined, tokensPerSecond: last.tokensPerSecond ?? undefined };
       }
       messages.push({ role: "assistant", content: last.content ?? "", tool_calls: calls });
+      // Modelos pequenos às vezes mandam dezenas de chamadas de uma vez (ex.: 23 `drag` com elementos que não
+      // existem). Depois do primeiro erro o resto do lote não roda: o modelo vê o erro e decide de novo.
+      let failed = false;
       for (const call of calls) {
         const name = call.function?.name ?? "";
         const args = parseArguments(call.function?.arguments);
+        if (failed) {
+          messages.push({ role: "tool", tool_name: name, content: "Não executei: uma chamada anterior deste lote falhou. Leia o erro acima e chame de novo, uma de cada vez." });
+          continue;
+        }
         if (name === "ask_user") {
           const question = String(args.question ?? "Pode confirmar?");
           track({ id: crypto.randomUUID(), tool: name, args, label: describeToolCall(name, args), status: "ok", output: question });
@@ -310,6 +370,7 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentResult> {
         const step: AgentStep = { id: crypto.randomUUID(), tool: name, args, label: describeToolCall(name, args), status: "running" };
         const outcome = await runStep(step, state, wrapped);
         messages.push({ role: "tool", tool_name: name, content: clip(outcome.text || `(status: ${outcome.status})`) });
+        if (outcome.status === "error" && calls.length > 1) failed = true;
         if (outcome.image) {
           messages.push({ role: "user", content: `Print atual da janela (${outcome.imageWidth}x${outcome.imageHeight} px). Coordenadas de clique são em pixels desta imagem.`, images: [outcome.image] });
         }

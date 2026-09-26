@@ -6,6 +6,12 @@ describe("textForSpeech", () => {
     const text = "## Resultado\n**Pronto!** Veja `npm test`:\n```ts\nconst a = 1;\n```\nMais em https://exemplo.com e [docs](https://x.y).";
     expect(textForSpeech(text)).toBe("Resultado Pronto! Veja npm test: (trecho de código na tela) Mais em o link na tela e docs.");
   });
+
+  it("never reads emojis or stage directions aloud", () => {
+    expect(textForSpeech("Claro! 😊 Vamos lá 👍🏽")).toBe("Claro! Vamos lá");
+    expect(textForSpeech("*sorrindo* Oi, André! (risos) Tudo bem? [pausa] Me conta.")).toBe("Oi, André! Tudo bem? Me conta.");
+    expect(textForSpeech("Use o comando (dir) no terminal.")).toBe("Use o comando (dir) no terminal.");
+  });
 });
 
 describe("speechChunks", () => {

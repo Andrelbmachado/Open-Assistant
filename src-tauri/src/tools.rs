@@ -45,6 +45,8 @@ pub enum Step {
     },
     /// Compila o llama-server do bitnet.cpp oficial da Microsoft.
     BuildBitnet,
+    /// Arquivos de um modelo de imagem (`imagegen::MODELS`, mesmo id da receita).
+    ImageModel,
 }
 
 pub struct Recipe {
@@ -55,6 +57,15 @@ pub struct Recipe {
 }
 
 pub const SHERPA_RUNTIME: &str = "sherpa-onnx";
+use super::imagegen::{DIFFUSERS_RUNTIME, SD_RUNTIME};
+/// stable-diffusion.cpp fixado (2026-09-25), build CUDA 12 + runtime CUDA. O build Vulkan perdia
+/// a GPU ("device lost") na RTX 5070 no meio da geração; o CUDA gera 1024 px em ~23 s.
+const SD_CPP_URL: &str = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-920-2f88688/sd-master-2f88688-bin-win-cuda12-x64.zip";
+const SD_CUDART_URL: &str = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-920-2f88688/cudart-sd-bin-win-cu12-x64.zip";
+
+/// rclone fixado (2026-09): lista, baixa e envia arquivos de ~70 nuvens com login pelo navegador.
+pub const RCLONE: &str = "rclone";
+const RCLONE_URL: &str = "https://github.com/rclone/rclone/releases/download/v1.75.1/rclone-v1.75.1-windows-amd64.zip";
 
 pub const RECIPES: &[Recipe] = &[
     Recipe {
@@ -152,6 +163,32 @@ pub const RECIPES: &[Recipe] = &[
         requires: &[],
         steps: &[Step::Pip { packages: &["transformers", "accelerate", "soundfile"], torch_cuda: true }],
     },
+    // Geração de imagens: motores e modelos (arquivos definidos em imagegen.rs).
+    Recipe { id: SD_RUNTIME, requires: &[], steps: &[Step::Archive(SD_CPP_URL), Step::Archive(SD_CUDART_URL)] },
+    // Nuvens (Google Drive, OneDrive, Dropbox…) para o editor de nodes: rclone, um exe só.
+    Recipe { id: RCLONE, requires: &[], steps: &[Step::Archive(RCLONE_URL)] },
+    Recipe {
+        id: DIFFUSERS_RUNTIME,
+        requires: &[],
+        steps: &[Step::Pip { packages: &["diffusers", "transformers", "accelerate", "sentencepiece", "protobuf", "safetensors", "huggingface_hub", "pillow"], torch_cuda: true }],
+    },
+    Recipe { id: "img-z-image-turbo", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-flux1-schnell", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-flux1-dev", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-flux2-klein-4b", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-flux2-klein-9b", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-flux2-dev", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-qwen-image-2512", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-sd35-large", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-sd35-large-turbo", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-sd35-medium", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-sdxl", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-sd15", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-pixart-sigma", requires: &[SD_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-sana-1.5", requires: &[DIFFUSERS_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-kolors", requires: &[DIFFUSERS_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-hunyuandit", requires: &[DIFFUSERS_RUNTIME], steps: &[Step::ImageModel] },
+    Recipe { id: "img-glm-image", requires: &[DIFFUSERS_RUNTIME], steps: &[Step::ImageModel] },
 ];
 
 pub fn recipe(id: &str) -> Option<&'static Recipe> {
@@ -186,11 +223,26 @@ pub struct ToolStatus {
     installing: bool,
 }
 
-pub fn tools_root(app: &AppHandle) -> Result<PathBuf, String> {
+/// Arquivo com o caminho escolhido para os modelos (Configurações › Modelos locais › Mover).
+pub const LOCATION_FILE: &str = "tools-location.txt";
+
+pub fn default_tools_root(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
         .map(|dir| dir.join("tools"))
         .map_err(|error| format!("Pasta de dados do app indisponível: {error}"))
+}
+
+/// Pasta das ferramentas e modelos baixados; pode ter sido movida para outro disco.
+pub fn tools_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let default = default_tools_root(app)?;
+    let moved = default
+        .parent()
+        .map(|dir| dir.join(LOCATION_FILE))
+        .and_then(|file| fs::read_to_string(file).ok())
+        .map(|text| PathBuf::from(text.trim()))
+        .filter(|path| !path.as_os_str().is_empty() && path.is_dir());
+    Ok(moved.unwrap_or(default))
 }
 
 pub fn tool_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
@@ -241,6 +293,59 @@ fn running(tool_id: &str, phase: &str) -> ToolProgress {
         bytes_per_second: None,
         error: None,
     }
+}
+
+/// Baixa um arquivo com progresso no evento `tool-progress` (usado também pelos modelos de imagem).
+pub fn download_file(app: &AppHandle, tool_id: &str, phase: &str, url: &str, dest: &Path, cancel: &AtomicBool) -> Result<(), String> {
+    download(app, tool_id, phase, url, dest, cancel)
+}
+
+/// Roda um processo (ex.: download pelo huggingface_hub) mostrando o tamanho da pasta como progresso.
+pub fn run_with_folder_progress(
+    app: &AppHandle,
+    tool_id: &str,
+    phase: &str,
+    command: Command,
+    folder: &Path,
+    expected: Option<u64>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let done = Arc::new(AtomicBool::new(false));
+    let monitor = {
+        let (app, tool_id, phase, folder, done) = (app.clone(), tool_id.to_string(), phase.to_string(), folder.to_path_buf(), done.clone());
+        std::thread::spawn(move || {
+            let mut last = (Instant::now(), folder_size(&folder));
+            while !done.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1000));
+                let size = folder_size(&folder);
+                let elapsed = last.0.elapsed().as_secs_f64().max(0.001);
+                let speed = size.saturating_sub(last.1) as f64 / elapsed;
+                last = (Instant::now(), size);
+                emit(&app, ToolProgress { completed_bytes: Some(size), total_bytes: expected, bytes_per_second: Some(speed), ..running(&tool_id, &phase) });
+            }
+        })
+    };
+    let result = run_logged(app, tool_id, phase, command, cancel);
+    done.store(true, Ordering::SeqCst);
+    let _ = monitor.join();
+    result
+}
+
+/// Soma do tamanho dos arquivos de uma pasta (recursivo).
+pub fn folder_size(root: &Path) -> u64 {
+    let mut total = 0;
+    let mut pending = VecDeque::from([root.to_path_buf()]);
+    while let Some(dir) = pending.pop_front() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            match entry.metadata() {
+                Ok(meta) if meta.is_dir() => pending.push_back(entry.path()),
+                Ok(meta) => total += meta.len(),
+                Err(_) => {}
+            }
+        }
+    }
+    total
 }
 
 fn download(
@@ -604,6 +709,10 @@ fn run_recipe(app: &AppHandle, progress_id: &str, recipe: &Recipe, cancel: &Atom
             }
             Step::Pip { packages, torch_cuda } => run_pip(app, progress_id, &dir, packages, *torch_cuda, cancel)?,
             Step::BuildBitnet => build_bitnet(app, progress_id, &dir, cancel)?,
+            Step::ImageModel => {
+                let model = super::imagegen::model(recipe.id).ok_or("Modelo de imagem sem definição")?;
+                super::imagegen::install(app, progress_id, model, cancel)?;
+            }
         }
     }
     fs::write(dir.join(MARKER), format!("{}\n", recipe.id)).map_err(|error| error.to_string())
@@ -615,7 +724,7 @@ fn install(app: &AppHandle, recipe: &'static Recipe, cancel: &AtomicBool) -> Res
             continue;
         }
         let dependency = self::recipe(dependency).ok_or("Dependência desconhecida")?;
-        emit(app, running(recipe.id, "Baixando a runtime de voz"));
+        emit(app, running(recipe.id, "Baixando o motor necessário"));
         run_recipe(app, recipe.id, dependency, cancel)?;
         emit(
             app,
@@ -709,6 +818,9 @@ pub fn tool_remove(app: AppHandle, state: State<ToolsState>, tool_id: String) ->
             format!("Alguns arquivos estão em uso; feche o Open Assistant e remova de novo. ({error})")
         })?;
     }
+    if super::imagegen::model(recipe.id).is_some() {
+        super::imagegen::prune_shared(&app);
+    }
     Ok(())
 }
 
@@ -733,7 +845,7 @@ mod tests {
             assert!(recipe
                 .id
                 .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'));
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.'));
         }
     }
 
@@ -747,7 +859,9 @@ mod tests {
                 };
                 assert!(
                     url.starts_with("https://github.com/k2-fsa/sherpa-onnx/releases/download/")
-                        || url.starts_with("https://huggingface.co/microsoft/"),
+                        || url.starts_with("https://github.com/leejet/stable-diffusion.cpp/releases/download/")
+                        || url.starts_with("https://huggingface.co/microsoft/")
+                        || url.starts_with("https://github.com/rclone/rclone/releases/download/"),
                     "{url}"
                 );
             }

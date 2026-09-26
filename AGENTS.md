@@ -1,6 +1,7 @@
 # AGENTS.md — guia para IAs (Claude, Codex, Cursor…) editarem o Open Assistant
 
 Leia isto antes de mudar código. Arquitetura detalhada: `docs/ARCHITECTURE.md`. O que falta fazer: `docs/ROADMAP.md`.
+Padrões visuais (cores, fontes, componentes): `DESIGN.md` — siga-o e atualize-o ao mudar a interface.
 
 ## O que é
 Assistente pessoal desktop para Windows: **Tauri 2 (Rust) + React 19 + TypeScript + Vite**. Roda IA local
@@ -61,8 +62,26 @@ src/                         Front (React)
     messageMeta.ts           Nome do modelo, rodapé "modelo · tokens · tok/s"
     effort.ts, aiMeter.ts, composerState.ts, inlineMarkdown.ts, orbitalState.ts, robotExpression.ts,
     workspaceLayout.ts, providers.ts, qaMode.ts, localModels.ts, localOperation.ts
-  *.css                      Ordem de carga em main.tsx: neutral → blender → workspace-fixes → refined → refresh
-                             (refresh.css é a última e vence; mudanças novas vão nela, em seções comentadas)
+  components/AgentCursor.tsx  Robô-mouse do agente (aponta com o dedo, aperta, pega com as mãos); RobotAvatar/RobotHands
+  components/ImageGenerationCard.tsx + SnakeGame.tsx  Imagem no chat: prévia com brilho girando e jogo da cobrinha
+  components/StoragePanel.tsx  Barra do disco dos modelos e "Mover para outro disco"
+  components/PageHeader.tsx + Dropdown.tsx   Cabeçalho padrão das telas e lista suspensa do app (troque todo <select> por Dropdown)
+  components/FilesView.tsx   Tela Arquivos: árvore da pasta do projeto igual ao Explorer do VS Code (+ "Dados do app")
+  components/DashboardView.tsx  Painel de controle do Windows: CPU/RAM/memória reservada/GPU/disco, quem ocupa memória, atalhos
+  components/MarketplaceView.tsx  Skills, conectores MCP, modelos de texto e de imagem com estado real e instalar
+  components/AgentsView.tsx  Agentes (cartões)
+  components/LogsPanel.tsx   Configurações › Logs (o agente lê o mesmo arquivo com a ferramenta read_logs)
+  components/FileChangesCard.tsx  Cartão "Editou N arquivos · Desfazer · +X −Y" no fim da resposta do agente
+  utils/useDismiss.ts        Fecha menus/popovers ao clicar fora (pointerdown na captura) ou Esc — use em todo menu novo
+  utils/activity.ts          Texto do indicador enquanto a IA trabalha (ferramenta → "Navegando na internet"…)
+  utils/appLog.ts            appLog(nível, origem, texto) → logs do app; erros globais da interface já vão sozinhos
+  utils/fileChanges.ts / chatShare.ts / fileIcons.ts   Diff do cartão, exportar conversa (.md), ícones por extensão
+  utils/imageCatalog.ts      Modelos de imagem (UI) + detecção de "gere uma imagem de…"
+src-tauri/src/imagegen.rs    Geração de imagem: stable-diffusion.cpp CUDA (FLUX, SD, Qwen-Image, Z-Image, PixArt) e diffusers
+src-tauri/src/storage.rs     Discos, pasta de modelos do Ollama/app e troca de disco (OLLAMA_MODELS, tools-location.txt)
+  *.css                      Ordem de carga em main.tsx: neutral → blender → workspace-fixes → refined → refresh → polish
+                             (polish.css é a última e vence: padrão das telas, Dropdown, menus, editor de nodes, Arquivos,
+                             Logs, barra lateral, halo da imagem, cobrinha; mudanças novas vão nela, em seções comentadas)
 
 src-tauri/                   Backend (Rust)
   src/lib.rs                 Comandos Tauri gerais: terminal, credenciais, Ollama (chat/pull/tags), hardware, runtimes
@@ -74,6 +93,14 @@ src-tauri/                   Backend (Rust)
   src/tools.rs               Downloads de ferramentas (receitas fixas por id), venvs Python via uv, build do BitNet
   src/speech.rs              Voz via sherpa-onnx (DLL baixada e carregada sob demanda)
   src/bitnet.rs              Servidor do bitnet.cpp + chat no formato nativo do BitNet
+  src/logs.rs                Logs JSONL em %LOCALAPPDATA%\com.openassistant.windows\logs (logs::error/warn/info; panics entram)
+  src/resources.rs           Memória do PC (RAM, reservada/"commit", GPU), quem ocupa, free_for antes de tarefa pesada,
+                             explicação de "out of memory" com o culpado, reiniciar OneDrive (só por clique)
+  src/files.rs               Árvore da tela Arquivos (fs_list/fs_read), marcas do git, escolher pasta (IFileOpenDialog)
+  src/changes.rs             read_file/write_file/edit_file do agente + diff/desfazer por tarefa (pasta alteracoes)
+  src/desktop.rs / workflow.rs   Robô que move arquivos/janelas (mouse virtual) / nodes do editor e nuvem (rclone)
+  src/choreo.rs              Coreografia de carregar (agachar, esticar, pegar, virar, flutuar, soltar) com tempos
+                             fixos; tabela para a IA em skills/mover-arquivos-e-janelas/movimento_robo.md (mantenha iguais)
   skills/controle-do-windows/   Skill do agente (SKILL.md, intents.yaml, dispatch.ps1, catálogo, referências)
   skills/abrir-programas/       Skill "/abrir-programas": exemplos reais de abrir programas, sites e vídeos do YouTube
   build.rs                   /DELAYLOAD das DLLs de voz
@@ -98,6 +125,11 @@ src-tauri/                   Backend (Rust)
 - **Nova aba de Configurações**: tipo em `SettingsTab` (store.tsx) + botão/painel em `SettingsView.tsx`.
 
 ## Armadilhas conhecidas
+- "out of memory" / "memory layout cannot be allocated" com a placa de vídeo vazia = memória **reservada** do Windows
+  esgotada (outro programa segurando, ex.: OneDrive com 18 GB). Não é bug do app: `resources::explain_out_of_memory`
+  diz quem é; o gerador de imagem já solta o Ollama/voz e tenta de novo no modo econômico.
+- O app é de janela única (tauri-plugin-single-instance). Para E2E ao lado do app do usuário, rode a cópia com
+  `OPEN_ASSISTANT_MULTI_INSTANCE=1`.
 - O Ollama recusa a origem `http://tauri.localhost` (403): **toda** chamada ao Ollama passa pelo Rust (`ollama_*`).
 - `webkitSpeechRecognition` do WebView2 sempre falha com `network`: voz é local (sherpa-onnx). Não volte para ele.
 - sherpa-onnx é *delay-loaded*: chame `speech::ensure_runtime` antes de qualquer função do crate, senão o processo cai.
@@ -106,6 +138,8 @@ src-tauri/                   Backend (Rust)
 - Teclas do agente: se o foco está no próprio chat, `ensure_target_focus` traz a janela alvo antes de digitar.
 - BitNet: commit do bitnet.cpp fixado (`BITNET_COMMIT`); versões novas degradam o texto do GGUF oficial.
 - CSS: `.apple-composer-toolbar button` força 30 px de largura; botões com texto precisam de `width: auto`.
+- Imagem: o build Vulkan do stable-diffusion.cpp dá "device lost" na RTX 5070; use o CUDA (receita `sd-cpp-cuda`). Antes de gerar, o app descarrega os modelos do Ollama da VRAM.
+- CSS: nunca escreva `font-size: Npx`; use `calc(Npx * var(--fs-title|--fs-subtitle|--fs-body))` (escala de fontes em Aparência).
 
 ## Testar de ponta a ponta (exe real)
 Copie o exe para uma pasta temporária e rode com

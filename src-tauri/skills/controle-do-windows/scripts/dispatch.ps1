@@ -278,6 +278,8 @@ switch ($Intent) {
     }
     "new_folder" {
         if (-not $Path) { throw "path ausente" }
+        # Só o nome ("Teste do assistente") = pasta nova na Área de Trabalho, não na pasta atual do app.
+        if (-not [System.IO.Path]::IsPathRooted($Path)) { $Path = Join-Path ([Environment]::GetFolderPath("Desktop")) $Path }
         if ($WhatIf) { Say "WHATIF: mkdir $Path"; break }
         New-Item -ItemType Directory -Force -Path $Path | Out-Null
         Say "OK: $Path"

@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { formatElapsed, formatTokenCount, thinkingVerb } from "../utils/messageMeta";
+import { Cpu } from "lucide-react";
+import { formatElapsed, formatTokenCount, modelDisplayName } from "../utils/messageMeta";
+import { currentActivity } from "../utils/activity";
+import type { AgentStep } from "../utils/agentRunner";
 
 /**
  * Pac-Man de lado comendo bolinhas: três bolinhas andam até a boca e, a cada uma comida,
@@ -15,21 +18,27 @@ interface ThinkingIndicatorProps {
   tokens?: number;
   /** Trecho mais recente do raciocínio, exibido esmaecido abaixo da linha. */
   preview?: string;
+  /** Modelo que está respondendo (ex.: `Ollama: qwen3.5:9b`), mostrado acima do "Pensando". */
+  model?: string;
+  /** Passos do agente: com uma ferramenta rodando, a linha diz o que ela está fazendo. */
+  steps?: AgentStep[];
 }
 
-/** Linha "Pensando" seguida do Pac-Man, cronômetro e prévia do raciocínio do modelo. */
-export function ThinkingIndicator({ messageId, startedAt, tokens, preview }: ThinkingIndicatorProps) {
+/** Linha com a atividade real ("Pensando", "Navegando na internet"…), Pac-Man, cronômetro e prévia do raciocínio. */
+export function ThinkingIndicator({ messageId, startedAt, tokens, preview, model, steps }: ThinkingIndicatorProps) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     // Só o cronômetro precisa de estado; o Pac-Man anima por CSS.
     const timer = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(timer);
   }, []);
-  const verb = thinkingVerb(messageId);
-  const stats = [formatElapsed(startedAt ? now - startedAt : 0), tokens ? `${formatTokenCount(tokens)} tokens de raciocínio` : undefined, "esc para interromper"].filter(Boolean).join(" · ");
-  return <div className="thinking-indicator" role="status" aria-label={`${verb} ${stats}`}>
+  const elapsed = startedAt ? now - startedAt : 0;
+  const verb = currentActivity({ seed: messageId, elapsedMs: elapsed, steps });
+  const stats = [formatElapsed(elapsed), tokens ? `${formatTokenCount(tokens)} tokens de raciocínio` : undefined, "esc para interromper"].filter(Boolean).join(" · ");
+  return <div className="thinking-indicator" role="status" aria-label={`${model ? `${modelDisplayName(model)}: ` : ""}${verb} ${stats}`}>
+    {model && <div className="thinking-model"><Cpu size={11} />{modelDisplayName(model)}</div>}
     <div className="thinking-line">
-      <span className="thinking-verb">{verb}</span>
+      <span key={verb} className="thinking-verb">{verb}</span>
       <PacmanLoader />
       <span className="thinking-stats">({stats})</span>
     </div>

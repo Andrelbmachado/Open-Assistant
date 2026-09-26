@@ -1,6 +1,23 @@
-/** Remove o que não deve ser lido em voz alta (blocos de código, marcação Markdown, links). */
-export function textForSpeech(text: string): string {
+/** Palavras que denunciam uma rubrica ("*sorri*", "(risos)", "[pausa]") em vez de fala. */
+const STAGE_DIRECTION = /\b(sorri\w*|sorriso\w*|rindo|risos?|risad\w*|pausa\w*|suspir\w*|pisca\w*|piscad\w*|acen\w*|olhando|rosto|express[aã]o|gargalh\w*|animad\w*|empolgad\w*|entusiasmad\w*|brincalh\w*|sussurr\w*|gesto\w*|tom\s+\w+|voz\s+\w+|smil\w*|laugh\w*|sigh\w*|wink\w*|grin\w*)\b/i;
+
+/** Emojis, pictogramas e seus modificadores: o TTS os lia pelo nome ("rosto sorridente"). */
+const EMOJI = /[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]/gu;
+
+/** Tira emojis e rubricas de ação/expressão, deixando só o que deve ser dito. */
+export function stripStageDirections(text: string): string {
+  const unlessDirection = (whole: string, inner: string) => STAGE_DIRECTION.test(inner) ? " " : whole;
   return text
+    .replace(EMOJI, "")
+    .replace(/\*([^*\n]{1,60})\*/g, unlessDirection)
+    .replace(/\(([^()\n]{1,60})\)/g, unlessDirection)
+    .replace(/\[([^\]\n]{1,60})]/g, unlessDirection)
+    .replace(/:[a-z_]{2,}:/g, " ");
+}
+
+/** Remove o que não deve ser lido em voz alta (código, Markdown, links, emojis e rubricas). */
+export function textForSpeech(text: string): string {
+  return stripStageDirections(text)
     .replace(/```[\s\S]*?```/g, " (trecho de código na tela) ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/!\[[^\]]*]\([^)]*\)/g, "")
