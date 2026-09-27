@@ -15,6 +15,9 @@ export function AgentsView() {
   const { state, dispatch } = useStore();
   const history = useTraceHistory();
   const [tab, setTab] = useState<AgentsTab>("usuario");
+  const [chatFilter, setChatFilter] = useState("");
+  const chatsInHistory = [...new Set(history.map((entry) => entry.chatId).filter((id): id is string => Boolean(id)))];
+  const filtered = chatFilter ? history.filter((entry) => entry.chatId === chatFilter) : history;
   const [newAgentType, setNewAgentType] = useState<"workflow" | "terminal">("workflow");
   const openWithKeyboard = (event: KeyboardEvent<HTMLElement>, open: () => void) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } };
   const chatTitle = (chatId?: string) => state.chats.find((chat) => chat.id === chatId)?.title ?? "conversa";
@@ -50,9 +53,14 @@ export function AgentsView() {
             <footer><span className="market-status instalado"><i className="agent-dot" />{last ? `${last.ok ? "Última vez" : "Falhou"} às ${timeOf(last.at)}` : "Ainda não rodou nesta sessão"}</span>{workflow && <small className="agent-meta">{workflow.name} · {workflow.nodes.length} nodes</small>}</footer>
           </article>; })}
         </div>
-        <h3 className="agents-section-title">Execuções recentes</h3>
-        {history.length ? <ul className="system-trace-list">
-          {history.slice(0, 30).map((entry) => <li key={entry.id} className={entry.ok ? "ok" : "error"}>
+        <div className="agents-history-head"><h3 className="agents-section-title">Execuções recentes</h3>
+          {chatsInHistory.length > 0 && <select aria-label="Filtrar por conversa" value={chatFilter} onChange={(event) => setChatFilter(event.target.value)}>
+            <option value="">Todas as conversas</option>
+            {chatsInHistory.map((id) => <option key={id} value={id}>{chatTitle(id)}</option>)}
+          </select>}
+        </div>
+        {filtered.length ? <ul className="system-trace-list">
+          {filtered.slice(0, 40).map((entry) => <li key={entry.id} className={entry.ok ? "ok" : "error"}>
             <i className={`node-status-dot ${entry.ok ? "ok" : "error"}`} />
             <b>{SYSTEM_WORKFLOWS.find((doc) => doc.id === entry.workflowId)?.name ?? entry.workflowId}</b>
             <small>{timeOf(entry.at)}{entry.chatId ? ` · ${chatTitle(entry.chatId)}` : ""}</small>

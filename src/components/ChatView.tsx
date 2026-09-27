@@ -19,7 +19,8 @@ import { allCloudProviders, CLOUD_PRODUCT_NAMES, cloudModelValue, providerModels
 import { memoryPrompt } from "../utils/memory";
 import { learnWithTrace } from "../utils/memoryFlow";
 import { traceSystem } from "../store/systemTrace";
-import { SYS_MEMORY_SAVE } from "../utils/systemWorkflows";
+import { SYS_CHAT_REPLY, SYS_MEMORY_SAVE } from "../utils/systemWorkflows";
+import { startChatFlow } from "../utils/chatFlow";
 import { looksLikePcAction } from "../utils/pcIntent";
 import { looksLikeWorkflowRequest } from "../utils/workflowService";
 import { parseCalculation } from "../utils/calc";
@@ -598,16 +599,21 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
     let thinkingMs: number | undefined;
     const agentHistory = () => history.slice(0, -1).filter((item) => item.role === "user" || item.role === "assistant").map((item) => ({ role: item.role as "user" | "assistant", content: item.content }));
     const resumeListening = () => { if (options.speakAfter && session === voiceSession.current && conversationRef.current) void startListening(); };
+    // Fluxo do sistema "Responder no chat": cada caminho acende no editor de nodes (tela Agentes › Chat).
+    const flow = startChatFlow(() => traceSystem(SYS_CHAT_REPLY, { chatId }), sourceText || text);
     const finish = (replyText: string) => {
       if (cancelled()) return;
+      flow.done(replyText);
       if (speakReply(replyText)) startSpeaking(replyText, true);
       else { setOrbitalState(nextOrbitalState("reset")); resumeListening(); }
     };
     /** Controle do PC: o agente executa ferramentas e mostra cada passo na mesma mensagem. */
     const controlComputer = async () => {
       const agentModel = agentModelFor(model);
+      flow.route("agente", modelDisplayName(agentModel));
       dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: "", thinking: undefined, loading: true, model: agentModel } });
       const result = await agentTurn({ chatId, assistantMsgId, requestId, model: agentModel, memory: memoryBlock, invocations: sentInvocations, history: agentHistory(), userText: attached.text ? `${sourceText}\n\n${attached.text}` : sourceText, images: attached.images });
+      flow.detail(`${result.steps.length} ${result.steps.length === 1 ? "passo" : "passos"}: ${result.steps.map((step) => step.label).join(" · ").slice(0, 200)}`);
       if (isFirstQuestion && sourceText) refineTitle(chatId, agentModel, sourceText);
       if (await imageInstead(result.text)) return;
       finish(result.text);
@@ -617,6 +623,7 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
       const prompt = !cancelled() && sourceText ? imageFallbackPrompt(sourceText, replyText) : undefined;
       if (!prompt) return false;
       appLog("info", "imagem", `O modelo de texto não gera imagens; chamei o gerador de imagem: "${prompt}"`);
+      flow.route("imagem", prompt);
       await imageTurn(chatId, assistantMsgId, requestId, prompt);
       finish("");
       return true;
@@ -626,6 +633,7 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
       // 0. Imagem: modo imagem ligado ou pedido claro ("gere uma imagem de…").
       const imagePrompt = options.text === undefined && imageMode && sourceText ? imagePromptFrom(sourceText) ?? sourceText : plainText ? imagePromptFrom(sourceText) : undefined;
       if (imagePrompt) {
+        flow.route("imagem", imagePrompt);
         await imageTurn(chatId, assistantMsgId, requestId, imagePrompt);
         if (isFirstQuestion && sourceText && model) refineTitle(chatId, model, sourceText);
         finish("");
@@ -634,6 +642,7 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
       // 1. Conta básica: calculadora do app, zero tokens.
       const calculation = plainText ? parseCalculation(sourceText) : undefined;
       if (calculation) {
+        flow.route("calculadora", `${calculation.expression} = ${calculation.result}`);
         dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: `${calculation.expression} = ${calculation.result}`, calc: { expression: calculation.expression, result: calculation.result }, loading: false, source: "Calculadora" } });
         finish(`${calculation.expression} = ${calculation.result}`);
         return;
@@ -642,6 +651,7 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
         // 1b. "No PC-Sala, abra o Chrome": a tarefa vai para o agente daquele computador da rede (ele confirma lá).
         const remoteTarget = plainText ? parseRemoteTarget(sourceText, netDevices) : null;
         if (remoteTarget) {
+          flow.route("rede", `${remoteTarget.deviceName}: ${remoteTarget.task}`);
           dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: `Pedindo ao ${remoteTarget.deviceName}: “${remoteTarget.task}”…`, loading: true, source: `Rede · ${remoteTarget.deviceName}` } });
           const text = await invoke<string>("remote_agent", { deviceId: remoteTarget.deviceId, task: remoteTarget.task, requestId });
           if (cancelled()) return;
@@ -656,6 +666,7 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
           const match = await matchAction(sourceText);
           if (cancelled()) return;
           if (match.kind === "run") {
+            flow.route("acao", match.candidate.label);
             const result = await catalogTurn(chatId, assistantMsgId, match.candidate, requestId);
             finish(result.text);
             return;
@@ -667,6 +678,7 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
       }
       if (!model) throw new Error(NO_LOCAL_MODEL_ERROR);
       // 5. Conversa normal; se o modelo decidir que precisa agir no PC, ele pede e o agente assume.
+      flow.route("modelo", modelDisplayName(model));
       const reply = await askAI(model, history, {
         requestId,
         memory: memoryBlock,
@@ -696,6 +708,7 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
     } catch (err) {
       if (cancelled()) return;
       const message = err instanceof Error ? err.message : String(err);
+      flow.fail(message);
       const modelId = model ? ollamaModelId(model) : undefined;
       appLog("erro", "ia", `${model || "sem modelo"}: ${message}`);
       dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: message, loading: false, error: true, source: modelId ? `Ollama (${modelId})` : undefined } });

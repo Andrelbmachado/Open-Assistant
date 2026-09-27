@@ -28,6 +28,8 @@ pub struct ChatRequestData {
     pub options: Option<serde_json::Value>,
     /// Ligado quando quem pediu desistiu (a conexão caiu): o executor para de gerar.
     pub cancel: Arc<AtomicBool>,
+    /// Nome do computador que perguntou (para a tela deste mostrar quem está usando a IA).
+    pub from_name: String,
 }
 
 /// Quem responde os pedidos de chat (no app: `run_chat_with` com o Ollama local). Recebe os pedaços por callback.
@@ -523,12 +525,10 @@ impl Node {
                 }
             }
             Some(Message::ChatRequest { request_id, model, messages, think, think_level, options }) => {
-                let allowed = self.inner.trust.lock().unwrap().get(&remote).is_some_and(|device| device.permissions.usar_ia);
-                if !allowed {
-                    write_message(&mut send, &Message::Error { message: "Este computador não tem permissão para usar a IA daqui.".into() }).await?;
-                } else {
+                let asker = self.inner.trust.lock().unwrap().get(&remote).filter(|device| device.permissions.usar_ia).map(|device| device.info.name.clone());
+                if let Some(from_name) = asker {
                     let cancel = Arc::new(AtomicBool::new(false));
-                    let data = ChatRequestData { request_id, model, messages, think, think_level, options, cancel: cancel.clone() };
+                    let data = ChatRequestData { request_id, model, messages, think, think_level, options, cancel: cancel.clone(), from_name };
                     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
                     let executor = self.inner.executor.clone();
                     let job = tokio::task::spawn_blocking(move || executor(data, &mut |delta| {
@@ -545,6 +545,8 @@ impl Node {
                         Err(message) => Message::Error { message },
                     };
                     let _ = write_message(&mut send, &reply).await;
+                } else {
+                    write_message(&mut send, &Message::Error { message: "Este computador não tem permissão para usar a IA daqui.".into() }).await?;
                 }
             }
             Some(Message::AgentTask { request_id, task }) => {
@@ -609,7 +611,7 @@ mod tests {
     }
 
     fn chat(id: &str, messages: serde_json::Value) -> ChatRequestData {
-        ChatRequestData { request_id: id.into(), model: "qwen3.5:9b".into(), messages, think: None, think_level: None, options: None, cancel: Arc::new(AtomicBool::new(false)) }
+        ChatRequestData { request_id: id.into(), model: "qwen3.5:9b".into(), messages, think: None, think_level: None, options: None, cancel: Arc::new(AtomicBool::new(false)), from_name: String::new() }
     }
 
     #[tokio::test(flavor = "multi_thread")]

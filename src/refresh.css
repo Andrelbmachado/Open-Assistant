@@ -958,3 +958,5 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .network-field input.address { font-size: calc(12px * var(--fs-body, 1)); letter-spacing: 0; }
 .network-view .page-header { flex-wrap: wrap; row-gap: 8px; height: auto !important; min-height: 56px; padding-top: 8px; padding-bottom: 8px; }
 .network-view .page-actions { flex-wrap: wrap; justify-content: flex-end; }
+.agents-history-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.agents-history-head select { height: 28px; padding: 0 8px; border: 1px solid var(--card-border); border-radius: 7px; background: var(--card); color: var(--text); font-size: calc(11.5px * var(--fs-body, 1)); }

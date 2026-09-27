@@ -166,7 +166,7 @@ Os editores de notes/nós (Node Editor / Node Workflow) passam a ser usados pelo
 - [x] Permitir abrir duas telas lado a lado (Chat + Node Editor) para ver a memória sendo salva enquanto conversa
 - [x] Cada conversa tem sua "trilha" de fluxos executados (parcial: "Execuções recentes" mostra a conversa; filtro por conversa e histórico em disco na fase 2)
 - [ ] Workflow **Sonhos**: à noite a IA lê as memórias do dia e propõe/cria novas skills e novos conectores para facilitar o dia seguinte (com revisão do usuário antes de ativar)
-- [ ] Converter as demais automações existentes em workflows visuais: roteamento chat→agente (`matchAction`/`controlar_computador`), calculadora, agente do PC, MCP, voz, geração de imagem
+- [x] Converter as demais automações em workflows visuais (fase 2): fluxo "Responder no chat" (imagem, calculadora, outro computador, ação rápida, agente do PC com os passos, modelo) + "Atender outro computador" + "Controle remoto"; histórico guardado entre aberturas e filtro por conversa. MCP e voz aparecem como caminho do agente/modelo
 - [ ] Formato único de workflow (JSON de nós + arestas) usado tanto pelos agentes do sistema quanto pelos do usuário; eventos de execução emitidos pelo Rust para a UI
 
 ## 12. Browser próprio: Obscura (pedido 2026-09-26)

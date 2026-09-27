@@ -8,7 +8,7 @@ import { traceSystem, type SystemTrace } from "../store/systemTrace";
 import { runAgent, type AgentStep } from "../utils/agentRunner";
 import { OLLAMA_MODEL_PREFIX } from "../utils/localCatalog";
 import { isQAOffline } from "../utils/qaMode";
-import { SYS_REMOTE_CONTROL } from "../utils/systemWorkflows";
+import { SYS_REMOTE_CONTROL, SYS_REMOTE_SERVE } from "../utils/systemWorkflows";
 
 interface RemoteTask { id: string; fromId: string; fromName: string; task: string; needsConfirm: boolean }
 interface Card extends RemoteTask { phase: "ask" | "running" | "done"; steps: AgentStep[]; result?: string; ok?: boolean; confirm?: { step: AgentStep; resolve: (answer: "allow" | "always" | "deny") => void } }
@@ -36,7 +36,21 @@ export function RemoteTaskHost() {
       if (!task.needsConfirm) { trace.step("confirmar", "Permissão \"Controlar este PC\" ligada"); void execute(task); }
       else trace.wait("confirmar");
     });
-    return () => { void stop.then((unlisten) => unlisten()); };
+    // Outro computador usando a IA deste: acende o fluxo "Atender outro computador".
+    let serving: SystemTrace | undefined;
+    const stopServe = listen<{ phase: "start" | "done" | "error"; fromName: string; model: string; text: string }>("net-chat-served", (event) => {
+      const { phase, fromName, model, text } = event.payload;
+      if (phase === "start") {
+        serving = traceSystem(SYS_REMOTE_SERVE);
+        serving.step("pedido", `${fromName} · ${model}`);
+        serving.wait("modelo");
+      } else if (phase === "done") {
+        serving?.step("modelo", text);
+        serving?.step("resposta", text);
+        serving?.end(`Respondeu a outro computador`);
+      } else serving?.fail("modelo", text);
+    });
+    return () => { void stop.then((unlisten) => unlisten()); void stopServe.then((unlisten) => unlisten()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

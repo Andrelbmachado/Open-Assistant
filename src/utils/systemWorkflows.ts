@@ -7,6 +7,8 @@ import { buildWorkflow, type WorkflowDoc } from "./workflow";
 
 export const SYS_MEMORY_SAVE = "sys-memoria-salvar";
 export const SYS_REMOTE_CONTROL = "sys-rede-controle";
+export const SYS_CHAT_REPLY = "sys-chat-resposta";
+export const SYS_REMOTE_SERVE = "sys-rede-atender";
 
 export interface SystemAgent { id: string; name: string; role: string; workflowId: string }
 
@@ -14,7 +16,28 @@ function systemDoc(id: string, input: Parameters<typeof buildWorkflow>[0]): Work
   return { ...buildWorkflow(input, 0), id };
 }
 
+const chatBranch = (id: string, title: string, about: string, code: string) => ({ id, kind: "trace.step", title, params: { about, code } });
+
 export const SYSTEM_WORKFLOWS: WorkflowDoc[] = [
+  systemDoc(SYS_CHAT_REPLY, {
+    name: "Responder no chat",
+    description: "Cada mensagem do chat escolhe um caminho: imagem, calculadora, outro computador, ação rápida, agente do PC ou modelo de IA.",
+    nodes: [
+      { id: "mensagem", kind: "trace.start", title: "Mensagem do chat", params: { about: "O que você escreveu ou falou.", code: "src/components/ChatView.tsx (send)" } },
+      { id: "rotear", kind: "trace.step", title: "Escolher caminho", params: { about: "Regras do app decidem, sem gastar tokens, quem responde.", code: "src/components/ChatView.tsx (send)" } },
+      chatBranch("imagem", "Gerar imagem", "Pedido de imagem vai para o gerador local (sd.cpp).", "src/components/ChatView.tsx (imageTurn)"),
+      chatBranch("calculadora", "Calculadora do app", "Conta simples: resolvida na hora, zero tokens.", "src/utils/calc.ts"),
+      chatBranch("rede", "Outro computador da rede", "\"No PC-Sala, …\": a tarefa vai para o agente daquele computador.", "src/utils/network.ts (parseRemoteTarget)"),
+      chatBranch("acao", "Ação rápida (sem modelo)", "Pedido conhecido (\"abre o powershell\") roda direto do catálogo.", "src/utils/agentRunner.ts (matchAction)"),
+      chatBranch("agente", "Agente do PC", "O agente usa ferramentas no computador (clicar, digitar, abrir apps).", "src/utils/agentRunner.ts (runAgent)"),
+      chatBranch("modelo", "Modelo de IA", "Conversa normal com o modelo escolhido (local, nuvem ou de outro computador).", "src/utils/aiService.ts (askAI)"),
+      { id: "resposta", kind: "trace.step", title: "Resposta no chat", params: { about: "O texto que aparece para você (e é falado, no modo voz).", code: "src/components/ChatView.tsx" } },
+    ],
+    connections: [
+      { from: "mensagem", to: "rotear" },
+      ...["imagem", "calculadora", "rede", "acao", "agente", "modelo"].flatMap((branch) => [{ from: "rotear", to: branch }, { from: branch, to: "resposta" }]),
+    ],
+  }),
   systemDoc(SYS_MEMORY_SAVE, {
     name: "Salvar memória",
     description: "Quando você pede no chat para lembrar de algo, o app detecta o pedido, junta à memória e grava em memoria-da-ia.md.",
@@ -25,6 +48,16 @@ export const SYSTEM_WORKFLOWS: WorkflowDoc[] = [
       { id: "gravar", kind: "trace.step", title: "Gravar memoria-da-ia.md", params: { about: "Grava o arquivo em %LOCALAPPDATA%\\com.openassistant.windows.", code: "src/store/memoryFile.ts → memory_file_write (Rust)" } },
     ],
     connections: [{ from: "mensagem", to: "detectar" }, { from: "detectar", to: "juntar" }, { from: "juntar", to: "gravar" }],
+  }),
+  systemDoc(SYS_REMOTE_SERVE, {
+    name: "Atender outro computador",
+    description: "Outro computador da sua rede usa a IA (Ollama/placa de vídeo) deste PC no chat dele.",
+    nodes: [
+      { id: "pedido", kind: "trace.start", title: "Pergunta de outro computador", params: { about: "Chega pelo túnel criptografado, só de computadores conectados com \"Usar a IA\" ligado.", code: "src-tauri/src/network/node.rs (ChatRequest)" } },
+      { id: "modelo", kind: "trace.step", title: "Ollama deste PC", params: { about: "O modelo roda aqui, na placa de vídeo deste computador.", code: "src-tauri/src/lib.rs (run_chat_with)" } },
+      { id: "resposta", kind: "trace.step", title: "Resposta enviada", params: { about: "Os pedaços da resposta voltam em streaming para o chat de quem perguntou.", code: "src-tauri/src/network/node.rs (ChatDelta/ChatDone)" } },
+    ],
+    connections: [{ from: "pedido", to: "modelo" }, { from: "modelo", to: "resposta" }],
   }),
   systemDoc(SYS_REMOTE_CONTROL, {
     name: "Controle remoto",
@@ -40,7 +73,9 @@ export const SYSTEM_WORKFLOWS: WorkflowDoc[] = [
 ];
 
 export const SYSTEM_AGENTS: SystemAgent[] = [
+  { id: "sys-agente-chat", name: "Chat", role: "Decide quem responde cada mensagem: calculadora, ação rápida, agente, imagem, outro computador ou modelo.", workflowId: SYS_CHAT_REPLY },
   { id: "sys-agente-memoria", name: "Memória", role: "Guarda o que você pede para lembrar em memoria-da-ia.md.", workflowId: SYS_MEMORY_SAVE },
+  { id: "sys-agente-atender", name: "Atender a rede", role: "Responde perguntas de outros computadores usando a placa de vídeo deste.", workflowId: SYS_REMOTE_SERVE },
   { id: "sys-agente-controle", name: "Controle remoto", role: "Recebe tarefas de outros computadores da sua rede e pede sua aprovação.", workflowId: SYS_REMOTE_CONTROL },
 ];
 

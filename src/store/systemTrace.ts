@@ -17,7 +17,13 @@ export interface SystemTrace {
 export interface TraceEntry { id: string; workflowId: string; chatId?: string; at: number; ok: boolean; summary: string }
 
 const MAX_HISTORY = 200;
-let history: TraceEntry[] = [];
+const STORAGE_KEY = "open-assistant-system-trace";
+/** Histórico das execuções do sistema, guardado entre aberturas do app. */
+let history: TraceEntry[] = (() => {
+  try { const saved = JSON.parse(globalThis.localStorage?.getItem(STORAGE_KEY) ?? "[]"); return Array.isArray(saved) ? saved.slice(0, MAX_HISTORY) : []; }
+  catch { return []; }
+})();
+function persist() { try { globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(history)); } catch { /* sem armazenamento */ } }
 const listeners = new Set<() => void>();
 function emit() { for (const listener of listeners) listener(); }
 
@@ -39,6 +45,7 @@ export function traceSystem(workflowId: string, context: { chatId?: string } = {
     done = true;
     finishRun(workflowId, { ok, error: ok ? undefined : summary, outputs: {}, memory: {}, ms: now() - started });
     history = [{ id: `${workflowId}-${started}-${history.length}`, workflowId, chatId: context.chatId, at: started, ok, summary }, ...history].slice(0, MAX_HISTORY);
+    persist();
     emit();
   };
   return {

@@ -19,6 +19,18 @@ use pairing::Permissions;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub const DEVICES_EVENT: &str = "net-devices-changed";
+/// Outro computador está usando a IA deste (início/fim), para o fluxo do sistema na tela.
+pub const SERVE_EVENT: &str = "net-chat-served";
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ServeEvent {
+    phase: &'static str,
+    from_name: String,
+    model: String,
+    text: String,
+}
+
 /// Tarefa de agente vinda de outro computador: a tela deste PC confirma (se preciso), roda o agente e responde.
 pub const AGENT_TASK_EVENT: &str = "net-agent-task";
 
@@ -81,7 +93,19 @@ async fn start_node(app: &AppHandle) -> Result<Node, String> {
     .await
     .map_err(|error| error.to_string())?;
     let info = identity::DeviceInfo { name: rename.unwrap_or(info.name), ..info };
-    let executor: ChatExecutor = Arc::new(|request, on_delta| {
+    let served_app = app.clone();
+    let executor: ChatExecutor = Arc::new(move |request, on_delta| {
+        // A tela deste PC acende o fluxo "Atender outro computador" (§11).
+        let _ = served_app.emit(SERVE_EVENT, ServeEvent { phase: "start", from_name: request.from_name.clone(), model: request.model.clone(), text: String::new() });
+        let outcome = serve_chat(request, on_delta);
+        let (phase, text) = match &outcome {
+            Ok(value) => ("done", value.get("content").and_then(|content| content.as_str()).unwrap_or_default().chars().take(200).collect()),
+            Err(error) => ("error", error.clone()),
+        };
+        let _ = served_app.emit(SERVE_EVENT, ServeEvent { phase, from_name: String::new(), model: String::new(), text });
+        outcome
+    });
+    fn serve_chat(request: node::ChatRequestData, on_delta: &mut dyn FnMut(serde_json::Value)) -> Result<serde_json::Value, String> {
         let messages: Vec<crate::ChatMessageInput> = serde_json::from_value(request.messages).map_err(|error| error.to_string())?;
         let options: crate::ChatOptions = match request.options {
             Some(value) if !value.is_null() => serde_json::from_value(value).map_err(|error| error.to_string())?,
@@ -91,7 +115,7 @@ async fn start_node(app: &AppHandle) -> Result<Node, String> {
             on_delta(serde_json::to_value(delta).unwrap_or_default())
         })?;
         serde_json::to_value(result).map_err(|error| error.to_string())
-    });
+    }
     let tasks_app = app.clone();
     let agent: AgentExecutor = Arc::new(move |task: AgentTaskData| {
         let app = tasks_app.clone();
@@ -270,7 +294,7 @@ pub async fn remote_agent(state: State<'_, NetState>, device_id: String, task: S
 
 /// Cancelamento do chat remoto usa o mesmo mapa do `ollama_cancel_chat`.
 pub fn chat_request(request_id: &str, model: &str, messages: serde_json::Value, think: Option<bool>, think_level: Option<String>, options: Option<serde_json::Value>, cancel: Arc<AtomicBool>) -> node::ChatRequestData {
-    node::ChatRequestData { request_id: request_id.into(), model: model.into(), messages, think, think_level, options, cancel }
+    node::ChatRequestData { request_id: request_id.into(), model: model.into(), messages, think, think_level, options, cancel, from_name: String::new() }
 }
 
 #[cfg(test)]
