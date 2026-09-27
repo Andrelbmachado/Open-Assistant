@@ -158,7 +158,7 @@ export function WorkflowCanvas({ areaId, workflowId }: { areaId: string; workflo
     const left = Math.min(...doc.nodes.map((node) => node.x));
     const top = Math.min(...doc.nodes.map((node) => node.y));
     // Cabe tudo quando dá; workflows compridos ficam legíveis (mínimo 60 %) a partir do começo, à esquerda.
-    const fit = Math.min(1, Math.max(.6, Math.min((box.width - 60) / (right - left + 40), (box.height - 120) / (bottom - top + 40))));
+    const fit = Math.min(1, Math.max(readOnly ? .35 : .6, Math.min((box.width - 60) / (right - left + 40), (box.height - 120) / (bottom - top + 40))));
     setScale(fit);
     setPan({ x: 30 - left * fit, y: 70 - top * fit });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -290,7 +290,7 @@ export function WorkflowCanvas({ areaId, workflowId }: { areaId: string; workflo
         </div>
       </div>
       <div className="view-header-actions">
-        {readOnly && <span className="workflow-readonly-note" title={doc.description}><Eye size={13} />Fluxo do sistema · só visualização — acende quando o app usa</span>}
+        {readOnly && <span className="workflow-readonly-note" title={`Fluxo do sistema: acende quando o app usa. ${doc.description ?? ""}`}><Eye size={13} />Só visualização</span>}
         {!readOnly && <span className={`connect-hint ${connecting ? "active" : ""}`}><Link2 size={13} />{connecting ? "Solte na entrada de outro node" : "Arraste da saída para a entrada"}</span>}
         {minutes && <button className={`workflow-schedule ${doc.scheduleEnabled === false ? "off" : "on"}`} onClick={() => dispatch({ type: "wfSetSchedule", workflowId: id, enabled: doc.scheduleEnabled === false })} title="Liga/desliga a execução automática (só com o app aberto)">
           <Clock size={13} /><span className="schedule-text">A cada {minutes} min · </span>{doc.scheduleEnabled === false ? "pausado" : "ligado"}

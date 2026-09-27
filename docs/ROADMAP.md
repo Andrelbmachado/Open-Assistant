@@ -159,12 +159,12 @@ Resumo do que foi feito está em "Resultados verificados (sessão 3)" abaixo; o 
 ## 11. Sistema visível: Node Editor dos agentes do sistema (pedido 2026-09-26, próxima sessão)
 Ideia: todo fluxo automatizado do Open Assistant deve ser visível em tempo real para nós e para o usuário final.
 Os editores de notes/nós (Node Editor / Node Workflow) passam a ser usados pelo próprio sistema.
-- [ ] Tela **Agentes** com duas abas: **Agentes do sistema** (criados pela equipe do Open Assistant) e **Agentes do usuário** (criados pelo usuário)
-- [ ] "Agentes do sistema" lista todos os workflows/Node Editors internos do app (só leitura no início, mas abríveis)
-- [ ] Execução ao vivo: quando um fluxo roda, o Node Editor dele acende os nós na ordem (entrada → processamento → saída), com os dados passando
-- [ ] Workflow **Salvar memória**: pedido no chat ("lembre disso…") → nó pega o texto da conversa → nó resume/extrai → nó grava em `memoria-da-ia.md`; visível no Node Editor daquela conversa
-- [ ] Permitir abrir duas telas lado a lado (Chat + Node Editor) para ver a memória sendo salva enquanto conversa
-- [ ] Cada conversa tem sua "trilha" de fluxos executados (qual workflow rodou, quando, com qual entrada/saída)
+- [x] Tela **Agentes** com duas abas: **Agentes do sistema** (criados pela equipe do Open Assistant) e **Agentes do usuário** (criados pelo usuário)
+- [x] "Agentes do sistema" lista todos os workflows/Node Editors internos do app (só leitura no início, mas abríveis)
+- [x] Execução ao vivo: quando um fluxo roda, o Node Editor dele acende os nós na ordem (entrada → processamento → saída), com os dados passando
+- [x] Workflow **Salvar memória**: pedido no chat ("lembre disso…") → nó pega o texto da conversa → nó resume/extrai → nó grava em `memoria-da-ia.md`; visível no Node Editor daquela conversa
+- [x] Permitir abrir duas telas lado a lado (Chat + Node Editor) para ver a memória sendo salva enquanto conversa
+- [x] Cada conversa tem sua "trilha" de fluxos executados (parcial: "Execuções recentes" mostra a conversa; filtro por conversa e histórico em disco na fase 2)
 - [ ] Workflow **Sonhos**: à noite a IA lê as memórias do dia e propõe/cria novas skills e novos conectores para facilitar o dia seguinte (com revisão do usuário antes de ativar)
 - [ ] Converter as demais automações existentes em workflows visuais: roteamento chat→agente (`matchAction`/`controlar_computador`), calculadora, agente do PC, MCP, voz, geração de imagem
 - [ ] Formato único de workflow (JSON de nós + arestas) usado tanto pelos agentes do sistema quanto pelos do usuário; eventos de execução emitidos pelo Rust para a UI

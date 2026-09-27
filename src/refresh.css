@@ -866,10 +866,12 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 
 /* Tela Agentes: abas Sistema / Usuário e lista de execuções do sistema. */
 .agents-tabs { display: flex; gap: 4px; padding: 0 24px 8px; }
-.agents-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; border: 0; background: transparent; color: var(--muted, #9a9aa2); cursor: pointer; }
-.agents-tabs button.active { background: color-mix(in srgb, currentColor 10%, transparent); color: var(--text, inherit); }
-.agents-section-title { margin: 20px 0 8px; font-size: 13px; font-weight: 600; }
+.agents-view .agents-tabs button { display: inline-flex; align-items: center; gap: 6px; height: 28px; white-space: nowrap; font-size: calc(12px * var(--fs-body, 1)); line-height: 1; padding: 0 12px; border-radius: 8px; border: 0; background: transparent; color: var(--muted, #9a9aa2); cursor: pointer; }
+.agents-view .agents-tabs button.active { background: color-mix(in srgb, currentColor 10%, transparent); color: var(--text, inherit); }
+.agents-section-title { margin: 20px 0 8px; font-size: calc(12.5px * var(--fs-body, 1)); font-weight: 600; }
 .system-trace-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.system-trace-list li { display: grid; grid-template-columns: auto auto auto 1fr; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px; }
-.system-trace-list li span { color: var(--muted, #9a9aa2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.system-trace-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 6px 10px; border-radius: 8px; font-size: calc(11.5px * var(--fs-body, 1)); }
+.system-trace-list li .node-status-dot { align-self: center; flex: none; }
+.system-trace-list li span { flex-basis: 100%; padding-left: 16px; color: var(--muted, #9a9aa2); }
 .memory-note-row { display: inline-flex; gap: 6px; }
+.system-trace-list li small { color: var(--muted, #9a9aa2); font-size: inherit; }
