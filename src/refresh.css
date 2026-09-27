@@ -863,3 +863,13 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 
 /* Fluxo do sistema aberto no editor de nodes (só visualização). */
 .workflow-readonly-note { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; color: var(--muted, #9a9aa2); background: color-mix(in srgb, var(--action, #5aa9ff) 12%, transparent); }
+
+/* Tela Agentes: abas Sistema / Usuário e lista de execuções do sistema. */
+.agents-tabs { display: flex; gap: 4px; padding: 0 24px 8px; }
+.agents-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; border: 0; background: transparent; color: var(--muted, #9a9aa2); cursor: pointer; }
+.agents-tabs button.active { background: color-mix(in srgb, currentColor 10%, transparent); color: var(--text, inherit); }
+.agents-section-title { margin: 20px 0 8px; font-size: 13px; font-weight: 600; }
+.system-trace-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.system-trace-list li { display: grid; grid-template-columns: auto auto auto 1fr; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px; }
+.system-trace-list li span { color: var(--muted, #9a9aa2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-note-row { display: inline-flex; gap: 6px; }
