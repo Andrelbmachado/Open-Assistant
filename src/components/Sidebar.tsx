@@ -100,7 +100,9 @@ export function Sidebar() {
       </div>
       <footer className="sidebar-footer" ref={userArea}>
         {userMenuOpen && <div className="user-menu"><button onClick={() => { dispatch({ type: "settings", open: true }); setUserMenuOpen(false); }}><Settings size={15} /><span>Configurações</span></button></div>}
-        <button className="user-row" onClick={() => setUserMenuOpen((open) => !open)} aria-expanded={userMenuOpen}><span className="avatar">{initials}</span><span className="user-name"><strong>{displayName}</strong></span><span className={`runtime-location connection-${connection.level}`} title={`${runtime} · ${connection.detail}`} aria-label={`${runtime}: ${connection.label}`}>{runsLocally ? <Monitor size={15} /> : <Cloud size={15} />}<i className="connection-line" aria-hidden="true"><b /></i></span></button>
+        <button className="user-row" onClick={() => setUserMenuOpen((open) => !open)} aria-expanded={userMenuOpen}><span className="avatar">{initials}</span><span className="user-name"><strong>{displayName}</strong></span></button>
+        <button className={`runtime-location connection-${connection.level}`} title={`${runtime} · ${connection.detail}
+Clique para ver os computadores da rede`} aria-label={`${runtime}: ${connection.label}. Abrir computadores da rede`} onClick={() => dispatch({ type: "view", view: "network" })}>{runsLocally ? <Monitor size={15} /> : <Cloud size={15} />}<i className="connection-line" aria-hidden="true"><b /></i></button>
       </footer>
     </aside>
   );

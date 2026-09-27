@@ -875,3 +875,61 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .system-trace-list li span { flex-basis: 100%; padding-left: 16px; color: var(--muted, #9a9aa2); }
 .memory-note-row { display: inline-flex; gap: 6px; }
 .system-trace-list li small { color: var(--muted, #9a9aa2); font-size: inherit; }
+
+/* Ícone de computador da barra lateral: botão próprio (abre a página Rede), sobre a linha do usuário. */
+.sidebar-footer { position: relative; }
+.sidebar-footer > .runtime-location { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 0; background: transparent; cursor: pointer; }
+.sidebar-footer > .runtime-location:hover { color: var(--text); background: var(--card-hover, rgba(255,255,255,.06)); }
+
+/* Página Rede: malha de computadores. */
+.network-view .network-scroll { display: flex; flex-direction: column; }
+.network-main { display: flex; flex-wrap: wrap; gap: 14px; align-items: stretch; }
+.network-mesh { position: relative; flex: 1 1 380px; min-width: 0; height: 400px; padding: 0; overflow: hidden; }
+.network-mesh svg { display: block; width: 100%; height: 100%; }
+.mesh-edge { stroke: color-mix(in srgb, var(--action, #0a84ff) 55%, transparent); stroke-width: 1.6; }
+.mesh-edge.internet { stroke-dasharray: 6 6; }
+.mesh-node { cursor: pointer; color: var(--text); outline: none; }
+.mesh-node .mesh-halo { fill: var(--card, #1c1c1f); stroke: var(--card-border, rgba(255,255,255,.08)); }
+.mesh-node.self .mesh-halo { stroke: color-mix(in srgb, var(--action, #0a84ff) 70%, transparent); stroke-width: 1.5; }
+.mesh-node.selected .mesh-halo, .mesh-node:hover .mesh-halo, .mesh-node:focus-visible .mesh-halo { stroke: var(--action, #0a84ff); }
+.mesh-node.offline, .mesh-node.unpaired { opacity: .55; }
+.mesh-node.unpaired .mesh-halo { stroke-dasharray: 4 4; }
+.mesh-dot.on { fill: #3ecf8e; }
+.mesh-dot.off { fill: #8e8e96; }
+.mesh-label { font-size: calc(12px * var(--fs-body, 1)); font-weight: 600; text-anchor: middle; fill: currentColor; }
+.mesh-sub { font-size: calc(10.5px * var(--fs-body, 1)); text-anchor: middle; fill: var(--muted); }
+.mesh-empty { position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: center; align-items: center; gap: 8px; margin: 0; color: var(--muted); font-size: calc(11.5px * var(--fs-body, 1)); }
+.network-panel { flex: 1 1 260px; max-width: 420px; display: flex; flex-direction: column; gap: 12px; }
+.network-panel header { display: flex; align-items: center; gap: 10px; }
+.network-panel header div { flex: 1; min-width: 0; }
+.network-panel h3 { margin: 0; font-size: calc(14px * var(--fs-body, 1)); }
+.network-panel header small, .network-panel dd small { color: var(--muted); }
+.network-panel dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: calc(12px * var(--fs-body, 1)); }
+.network-panel dt { color: var(--muted); }
+.network-panel dd { margin: 0; overflow-wrap: anywhere; }
+.network-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.network-chips span { padding: 2px 7px; border-radius: 999px; background: var(--card-hover, rgba(255,255,255,.06)); font-size: calc(11px * var(--fs-body, 1)); }
+.network-permissions { display: flex; flex-direction: column; gap: 8px; }
+.network-permissions label { display: flex; gap: 8px; align-items: flex-start; font-size: calc(12px * var(--fs-body, 1)); }
+.network-permissions label span { display: flex; flex-direction: column; }
+.network-permissions label small { color: var(--muted); }
+.network-permissions label.soon { opacity: .6; }
+.page-button.danger { color: #ff6b6b; }
+.page-button.muted { color: var(--muted); }
+.network-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.network-list li { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--card); font-size: calc(12px * var(--fs-body, 1)); }
+.network-list li small { flex: 1; color: var(--muted); }
+.network-list li .page-button { height: 28px; }
+.network-hint { margin: 0; color: var(--muted); font-size: calc(12px * var(--fs-body, 1)); }
+.network-hint.center { text-align: center; }
+.network-error { cursor: pointer; margin-top: 10px; }
+.network-dialog-backdrop { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(0, 0, 0, .45); }
+.network-dialog { width: min(380px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 12px; }
+.network-dialog header { display: flex; align-items: center; gap: 8px; }
+.network-dialog header h3 { flex: 1; margin: 0; font-size: calc(14px * var(--fs-body, 1)); }
+.network-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+.network-field { display: flex; flex-direction: column; gap: 5px; font-size: calc(12px * var(--fs-body, 1)); color: var(--muted); }
+.network-field input, .network-field select { height: 34px; padding: 0 10px; border: 1px solid var(--card-border); border-radius: 8px; background: var(--surface-2, #1a1a1d); color: var(--text); font-size: calc(13px * var(--fs-body, 1)); }
+.network-field input { font-size: calc(18px * var(--fs-body, 1)); letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+.pair-code-big { margin: 6px 0 0; font-size: calc(40px * var(--fs-body, 1)); font-weight: 600; letter-spacing: .12em; font-variant-numeric: tabular-nums; text-align: center; color: var(--text); }
+.network-view { position: relative; }

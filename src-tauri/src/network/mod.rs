@@ -55,14 +55,20 @@ pub fn start(app: &AppHandle) {
 }
 
 async fn start_node(app: &AppHandle) -> Result<Node, String> {
-    let dir = app.path().app_local_data_dir().map_err(|error| error.to_string())?.join("rede");
+    // OPEN_ASSISTANT_NET_DIR: outra identidade na rede (testar dois apps no mesmo PC).
+    let dir = match std::env::var_os("OPEN_ASSISTANT_NET_DIR") {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => app.path().app_local_data_dir().map_err(|error| error.to_string())?.join("rede"),
+    };
     let key = identity::load_or_create_key(&dir)?;
+    let rename = std::env::var("OPEN_ASSISTANT_NET_NAME").ok();
     let info = tauri::async_runtime::spawn_blocking({
         let key = key.clone();
         move || identity::local_info(&key)
     })
     .await
     .map_err(|error| error.to_string())?;
+    let info = identity::DeviceInfo { name: rename.unwrap_or(info.name), ..info };
     let executor: ChatExecutor = Arc::new(|request, on_delta| {
         let messages: Vec<crate::ChatMessageInput> = serde_json::from_value(request.messages).map_err(|error| error.to_string())?;
         let options: crate::ChatOptions = match request.options {
@@ -169,6 +175,14 @@ pub async fn net_lan_neighbors() -> Result<Vec<Neighbor>, String> {
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Mostra no Explorador o arquivo do app para copiar a outro computador (o instalador `.exe` vem na fase 3).
+#[tauri::command]
+pub fn net_reveal_installer() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    std::process::Command::new("explorer").arg(format!("/select,{}", exe.display())).spawn().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// Cancelamento do chat remoto usa o mesmo mapa do `ollama_cancel_chat`.

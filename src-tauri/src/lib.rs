@@ -1716,6 +1716,7 @@ pub fn run() {
             network::net_set_permissions,
             network::net_set_visible,
             network::net_lan_neighbors,
+            network::net_reveal_installer,
             bitnet_chat,
             cloud_chat,
             tools::tools_status,

@@ -1,4 +1,4 @@
-export type ViewKind = "chat" | "workflow" | "terminal" | "agents" | "marketplace" | "files" | "browser" | "dashboard";
+export type ViewKind = "chat" | "workflow" | "terminal" | "agents" | "marketplace" | "files" | "browser" | "dashboard" | "network";
 
 export interface WorkspaceArea {
   id: string;
@@ -26,7 +26,7 @@ export interface SplitIntent {
   newAreaFirst: boolean;
 }
 
-const VIEW_KINDS = new Set<ViewKind>(["chat", "workflow", "terminal", "agents", "marketplace", "files", "browser", "dashboard"]);
+const VIEW_KINDS = new Set<ViewKind>(["chat", "workflow", "terminal", "agents", "marketplace", "files", "browser", "dashboard", "network"]);
 
 /** Converte o arrasto a partir de um canto em intenção de dividir a área (eixo e fração). */
 export function calculateSplitIntent(corner: Corner, deltaX: number, deltaY: number, width: number, height: number): SplitIntent | null {

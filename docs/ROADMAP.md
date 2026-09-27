@@ -191,15 +191,16 @@ Os editores de notes/nós (Node Editor / Node Workflow) passam a ser usados pelo
 ## 15. Rede de computadores: usar a GPU de outro PC (pedido 2026-09-27)
 Objetivo final: estar no MacBook, abrir o chat e usar o PC com RTX da rede no lugar de uma API paga; se pedir, ele controla o computador; instalador para os outros PCs e atualizações remotas.
 Design: `docs/superpowers/specs/2026-09-27-rede-de-computadores-design.md` · Plano da fase 1: `docs/superpowers/plans/2026-09-27-rede-fase1-local.md`
-- [ ] Fase 1: identidade por chave (MAC só como informação), descoberta na rede local, conexão por código de 6 dígitos (tipo AnyDesk)
-- [ ] Fase 1: página **Rede** aberta pelo ícone de computador da barra lateral: malha com ícones próprios (PC de mesa, notebook Windows, MacBook, Mac de mesa), nome e linha entre cada par
-- [ ] Fase 1: aparelhos da rede sem o app (IP + MAC) com "Enviar instalador"
-- [ ] Fase 1: chat e agente usando o modelo de outro computador (resposta em streaming; o agente controla o computador onde está o chat)
+- [x] Fase 1: identidade por chave (MAC só como informação), descoberta na rede local, conexão por código de 6 dígitos (tipo AnyDesk)
+- [x] Fase 1: página **Rede** aberta pelo ícone de computador da barra lateral: malha com ícones próprios (PC de mesa, notebook Windows, MacBook, Mac de mesa), nome e linha entre cada par
+- [x] Fase 1: aparelhos da rede sem o app (IP + MAC) com "Enviar instalador"
+- [x] Fase 1: chat e agente usando o modelo de outro computador (resposta em streaming; o agente controla o computador onde está o chat)
 - [ ] Fase 2: mandar tarefas para o agente de outro computador (permissão "Controlar este PC", confirmação no PC controlado)
 - [ ] Fase 3: instalador (`.exe` NSIS) e atualizações assinadas empurradas pelo computador dono para os PCs abaixo dele
 - [ ] Fase 4: conexão fora de casa (código fixo, conta, servidor de diretório/retransmissão da empresa): decisão de infraestrutura pendente
 - [ ] Fase 5: app para macOS (necessário para o cenário "estou no MacBook")
 - [ ] Todos os fluxos da rede visíveis no Node Editor (seção 11)
+- Verificado 2026-09-27 com dois apps no mesmo PC (`OPEN_ASSISTANT_NET_DIR`/`OPEN_ASSISTANT_NET_NAME`): descoberta mDNS em ~10 ms, código errado recusado, pareamento, chat remoto qwen3.5:9b a ~100 tok/s em streaming, recusa sem permissão. Falta testar com um segundo computador de verdade.
 
 ## Próximos passos sugeridos (sessão 7)
 - "Alinhar à grade": escolher o destino já na célula livre mais perto (hoje o ícone pode encaixar uma célula ao lado).

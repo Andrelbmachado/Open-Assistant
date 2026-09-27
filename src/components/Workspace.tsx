@@ -1,4 +1,4 @@
-import { Activity, Bot, FolderOpen, MessageSquare, ShoppingBag, TerminalSquare, Workflow } from "lucide-react";
+import { Activity, Bot, FolderOpen, MessageSquare, Network, ShoppingBag, TerminalSquare, Workflow } from "lucide-react";
 import { useRef, useState, type PointerEvent } from "react";
 import { useStore, type ViewKind, type WorkspaceArea, type WorkspaceLayoutNode, type WorkspaceSplit } from "../store/store";
 import { calculateSplitIntent, type Corner } from "../utils/workspaceLayout";
@@ -9,10 +9,11 @@ import { AgentsView } from "./AgentsView";
 import { DashboardView } from "./DashboardView";
 import { FilesView } from "./FilesView";
 import { MarketplaceView } from "./MarketplaceView";
+import { NetworkView } from "./NetworkView";
 import { useDismiss } from "../utils/useDismiss";
 
-const labels: Record<ViewKind, string> = { chat: "Chat", workflow: "Nodes", terminal: "Terminal", agents: "Agentes", marketplace: "Marketplace", files: "Arquivos", browser: "Browser", dashboard: "Dashboard" };
-const areaViews: ViewKind[] = ["chat", "workflow", "agents", "terminal", "files", "dashboard", "marketplace"];
+const labels: Record<ViewKind, string> = { chat: "Chat", workflow: "Nodes", terminal: "Terminal", agents: "Agentes", marketplace: "Marketplace", files: "Arquivos", browser: "Browser", dashboard: "Dashboard", network: "Rede" };
+const areaViews: ViewKind[] = ["chat", "workflow", "agents", "terminal", "files", "dashboard", "marketplace", "network"];
 
 function ViewRenderer({ kind, chatId, areaId, workflowId }: { kind: ViewKind; chatId?: string; areaId: string; workflowId?: string }) {
   if (kind === "chat") return <ChatView chatId={chatId} />;
@@ -22,6 +23,7 @@ function ViewRenderer({ kind, chatId, areaId, workflowId }: { kind: ViewKind; ch
   if (kind === "files") return <FilesView />;
   if (kind === "dashboard") return <DashboardView />;
   if (kind === "marketplace") return <MarketplaceView />;
+  if (kind === "network") return <NetworkView />;
   return <section className="view placeholder-view"><span><FolderOpen size={28} /></span><h2>{labels[kind]}</h2><p>Esta área está pronta para receber conteúdo.</p></section>;
 }
 
@@ -55,12 +57,12 @@ function AreaShell({ area }: { area: WorkspaceArea }) {
     clearDrag();
   };
 
-  const CurrentViewIcon = area.view === "chat" ? MessageSquare : area.view === "workflow" ? Workflow : area.view === "terminal" ? TerminalSquare : area.view === "files" ? FolderOpen : area.view === "agents" ? Bot : area.view === "marketplace" ? ShoppingBag : Activity;
+  const CurrentViewIcon = area.view === "chat" ? MessageSquare : area.view === "workflow" ? Workflow : area.view === "terminal" ? TerminalSquare : area.view === "files" ? FolderOpen : area.view === "agents" ? Bot : area.view === "marketplace" ? ShoppingBag : area.view === "network" ? Network : Activity;
   return <div className={`area-shell ${state.activeAreaId === area.id ? "active" : ""}`} ref={root} onPointerDown={() => dispatch({ type: "activateArea", id: area.id })} onPointerMove={updateDrag} onPointerUp={finishDrag} onPointerCancel={clearDrag} onLostPointerCapture={clearDrag}>
     <ViewRenderer kind={area.view} chatId={area.chatId} areaId={area.id} workflowId={area.workflowId} />
     <div ref={controls} className={`area-controls ${viewMenuOpen ? "open" : ""}`} onMouseEnter={() => setViewMenuOpen(true)} onMouseLeave={() => setViewMenuOpen(false)}>
       <button className="area-view-trigger" aria-label={`Trocar tipo de área: ${labels[area.view]}`} aria-expanded={viewMenuOpen} onPointerDown={(event) => event.stopPropagation()} onClick={() => setViewMenuOpen(true)}><CurrentViewIcon size={14} /></button>
-      <div className="area-view-menu" role="menu">{areaViews.map((view) => { const Icon = view === "chat" ? MessageSquare : view === "workflow" ? Workflow : view === "terminal" ? TerminalSquare : view === "files" ? FolderOpen : view === "agents" ? Bot : view === "marketplace" ? ShoppingBag : Activity; return <button key={view} role="menuitem" aria-label={labels[view]} title={labels[view]} className={area.view === view ? "active" : ""} onPointerDown={(event) => event.stopPropagation()} onClick={() => { dispatch({ type: "activateArea", id: area.id }); dispatch({ type: "view", view }); setViewMenuOpen(false); }}><Icon size={14} /><span className="sr-only">{labels[view]}</span></button>; })}</div>
+      <div className="area-view-menu" role="menu">{areaViews.map((view) => { const Icon = view === "chat" ? MessageSquare : view === "workflow" ? Workflow : view === "terminal" ? TerminalSquare : view === "files" ? FolderOpen : view === "agents" ? Bot : view === "marketplace" ? ShoppingBag : view === "network" ? Network : Activity; return <button key={view} role="menuitem" aria-label={labels[view]} title={labels[view]} className={area.view === view ? "active" : ""} onPointerDown={(event) => event.stopPropagation()} onClick={() => { dispatch({ type: "activateArea", id: area.id }); dispatch({ type: "view", view }); setViewMenuOpen(false); }}><Icon size={14} /><span className="sr-only">{labels[view]}</span></button>; })}</div>
     </div>
     {intent && <div className={`area-split-preview ${intent.axis} ${intent.newAreaFirst ? "first" : "second"}`} style={intent.axis === "horizontal" ? { width: `calc(${(intent.newAreaFirst ? intent.fraction : 1 - intent.fraction) * 100}% - 5px)` } : { height: `calc(${(intent.newAreaFirst ? intent.fraction : 1 - intent.fraction) * 100}% - 5px)` }} />}
     {corners.map((corner) => <button key={corner} className={`area-corner ${corner}`} aria-label="Arraste para criar uma nova área" onPointerDown={(event) => { event.stopPropagation(); const next = { corner, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, deltaX: 0, deltaY: 0 }; root.current?.setPointerCapture(event.pointerId); dragRef.current = next; setDrag(next); dispatch({ type: "activateArea", id: area.id }); }} />)}
