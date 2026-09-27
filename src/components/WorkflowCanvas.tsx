@@ -403,7 +403,7 @@ function RunPanel({ doc, open, onToggle }: { doc: WorkflowDoc; open: boolean; on
     <button className="workflow-run-head" onClick={onToggle}>
       {run.running ? <LoaderCircle size={13} className="spin" /> : result?.ok ? <i className="node-status-dot ok" /> : <i className="node-status-dot error" />}
       <strong>{run.running ? "Executando…" : result?.ok ? result.stopped ? "Nada novo — parou" : "Concluído" : "Falhou"}</strong>
-      <small>{run.trigger === "agenda" ? "agendado" : run.trigger === "ia" ? "pela IA" : "manual"}{result ? ` · ${(result.ms / 1000).toFixed(1)} s` : ""}</small>
+      <small>{run.trigger === "agenda" ? "agendado" : run.trigger === "ia" ? "pela IA" : run.trigger === "sistema" ? "pelo sistema" : "manual"}{result ? ` · ${(result.ms / 1000).toFixed(1)} s` : ""}</small>
       <ChevronDown size={13} className="chevron" />
     </button>
     {open && <div className="workflow-run-body">

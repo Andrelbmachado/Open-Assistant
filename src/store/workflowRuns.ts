@@ -10,8 +10,10 @@ export interface WorkflowRun {
   startedAt: number;
   nodes: Record<string, NodeRunInfo>;
   result?: RunResult;
-  /** Quem pediu: você (botão), o agendador ou a IA. */
-  trigger: "manual" | "agenda" | "ia";
+  /** Quem pediu: você (botão), o agendador, a IA ou o próprio app (fluxos do sistema). */
+  trigger: "manual" | "agenda" | "ia" | "sistema";
+  /** Conversa que disparou (fluxos do sistema). */
+  chatId?: string;
 }
 
 let runs: Record<string, WorkflowRun> = {};
@@ -26,9 +28,9 @@ export function useWorkflowRuns(): Record<string, WorkflowRun> {
 
 export function getWorkflowRun(id: string): WorkflowRun | undefined { return runs[id]; }
 
-export function startRun(id: string, trigger: WorkflowRun["trigger"]) {
+export function startRun(id: string, trigger: WorkflowRun["trigger"], chatId?: string) {
   cancels.delete(id);
-  runs = { ...runs, [id]: { running: true, startedAt: Date.now(), nodes: {}, trigger } };
+  runs = { ...runs, [id]: { running: true, startedAt: Date.now(), nodes: {}, trigger, chatId } };
   emit();
 }
 
