@@ -71,10 +71,7 @@ pub fn start(app: &AppHandle) {
 
 async fn start_node(app: &AppHandle) -> Result<Node, String> {
     // OPEN_ASSISTANT_NET_DIR: outra identidade na rede (testar dois apps no mesmo PC).
-    let dir = match std::env::var_os("OPEN_ASSISTANT_NET_DIR") {
-        Some(dir) => std::path::PathBuf::from(dir),
-        None => app.path().app_local_data_dir().map_err(|error| error.to_string())?.join("rede"),
-    };
+    let dir = net_dir(app)?;
     let key = identity::load_or_create_key(&dir)?;
     let rename = std::env::var("OPEN_ASSISTANT_NET_NAME").ok();
     let info = tauri::async_runtime::spawn_blocking({
@@ -115,8 +112,10 @@ async fn start_node(app: &AppHandle) -> Result<Node, String> {
             }
         })
     });
+    let internet = load_config(&dir).internet;
     let emitter = app.clone();
     Node::start(NodeConfig {
+        internet,
         dir,
         key,
         info,
@@ -130,17 +129,49 @@ async fn start_node(app: &AppHandle) -> Result<Node, String> {
     .await
 }
 
+/// `rede\config.json`: escolhas do usuário para a rede.
+#[derive(Serialize, serde::Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NetConfig {
+    /// Conectar fora de casa pelos servidores públicos do iroh (n0). Desligado até o usuário ligar.
+    pub internet: bool,
+}
+
+fn net_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    match std::env::var_os("OPEN_ASSISTANT_NET_DIR") {
+        Some(dir) => Ok(std::path::PathBuf::from(dir)),
+        None => Ok(app.path().app_local_data_dir().map_err(|error| error.to_string())?.join("rede")),
+    }
+}
+
+fn load_config(dir: &std::path::Path) -> NetConfig {
+    std::fs::read_to_string(dir.join("config.json")).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetStatus {
     self_info: identity::DeviceInfo,
     visible: bool,
+    /// Modo internet ligado agora (o que o app abriu usando).
+    internet: bool,
+    /// Modo internet escolhido (vale ao reabrir o app).
+    internet_saved: bool,
 }
 
 #[tauri::command]
-pub fn net_status(state: State<NetState>) -> Result<NetStatus, String> {
+pub fn net_status(app: AppHandle, state: State<NetState>) -> Result<NetStatus, String> {
     let node = state.node()?;
-    Ok(NetStatus { self_info: node.info(), visible: node.visible() })
+    Ok(NetStatus { self_info: node.info(), visible: node.visible(), internet: node.internet(), internet_saved: load_config(&net_dir(&app)?).internet })
+}
+
+/// Liga/desliga a conexão pela internet (vale ao reabrir o app).
+#[tauri::command]
+pub fn net_set_internet(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let dir = net_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let config = NetConfig { internet: enabled };
+    std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

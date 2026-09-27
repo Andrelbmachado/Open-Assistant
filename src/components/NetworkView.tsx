@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Eye, EyeOff, KeyRound, Link2, LoaderCircle, Network, Radar, Send, Trash2, X } from "lucide-react";
+import { Copy, Eye, EyeOff, Globe, KeyRound, Link2, LoaderCircle, Network, Radar, Send, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { refreshNetDevices, useNetDevices, useRemoteActivity } from "../store/network";
 import { formatPairCode, meshLayout, normalizePairCode, type NetDevice } from "../utils/network";
@@ -7,6 +7,7 @@ import { DEVICE_KIND_LABEL, DeviceIcon } from "./DeviceIcon";
 import { PageHeader } from "./PageHeader";
 
 interface Neighbor { ip: string; mac: string }
+interface NetStatus { visible: boolean; internet: boolean; internetSaved: boolean; selfInfo: { id: string } }
 type Permissions = NonNullable<NetDevice["permissions"]>;
 
 const ICON = 46;
@@ -22,6 +23,7 @@ export function NetworkView() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [neighbors, setNeighbors] = useState<Neighbor[]>([]);
   const [visible, setVisible] = useState(true);
+  const [status, setStatus] = useState<NetStatus | null>(null);
   const [dialog, setDialog] = useState<null | { kind: "code" } | { kind: "connect"; deviceId?: string }>(null);
   const [error, setError] = useState<string | null>(null);
   const mesh = useRef<HTMLDivElement>(null);
@@ -29,7 +31,7 @@ export function NetworkView() {
 
   useEffect(() => {
     void refreshNetDevices();
-    void invoke<{ visible: boolean }>("net_status").then((status) => setVisible(status.visible)).catch(() => undefined);
+    void invoke<NetStatus>("net_status").then((value) => { setStatus(value); setVisible(value.visible); }).catch(() => undefined);
     const loadNeighbors = () => void invoke<Neighbor[]>("net_lan_neighbors").then(setNeighbors).catch(() => undefined);
     loadNeighbors();
     const timer = setInterval(loadNeighbors, 30000);
@@ -56,10 +58,18 @@ export function NetworkView() {
     void invoke("net_set_visible", { visible: next }).catch(() => setVisible(!next));
   };
 
+  const toggleInternet = () => {
+    if (!status) return;
+    const enabled = !status.internetSaved;
+    if (enabled && !confirm("Conectar pela internet usa os servidores públicos do iroh (empresa n0) para achar este computador fora de casa. O conteúdo continua criptografado de ponta a ponta; o servidor só vê o endereço de rede. Vale ao reabrir o app. Ligar?")) return;
+    void invoke("net_set_internet", { enabled }).then(() => setStatus({ ...status, internetSaved: enabled })).catch((reason) => setError(String(reason)));
+  };
+
   return <section className="view page-view network-view">
     <PageHeader eyebrow="Sua rede" title="Computadores" icon={<Network size={17} />}>
-      <button className={`page-button ${visible ? "" : "muted"}`} onClick={toggleVisible} title={visible ? "Outros computadores da rede local conseguem ver este" : "Só computadores já conectados enxergam este"}>{visible ? <Eye size={14} /> : <EyeOff size={14} />}{visible ? "Visível na rede" : "Invisível"}</button>
-      <button className="page-button" onClick={() => setDialog({ kind: "code" })}><KeyRound size={14} />Mostrar meu código</button>
+      <button className={`page-button ${visible ? "" : "muted"}`} onClick={toggleVisible} title={visible ? "Outros computadores da rede local conseguem ver este" : "Só computadores já conectados enxergam este"}>{visible ? <Eye size={14} /> : <EyeOff size={14} />}{visible ? "Visível" : "Invisível"}</button>
+      <button className={`page-button ${status?.internetSaved ? "" : "muted"}`} onClick={toggleInternet} title={status && status.internetSaved !== status.internet ? "Vale ao reabrir o app" : "Conectar computadores fora da rede de casa (opcional)"}><Globe size={14} />{status?.internetSaved ? "Internet" : "Só local"}{status && status.internetSaved !== status.internet ? " · reabra" : ""}</button>
+      <button className="page-button" onClick={() => setDialog({ kind: "code" })}><KeyRound size={14} />Meu código</button>
       <button className="page-button primary" onClick={() => setDialog({ kind: "connect" })}><Link2 size={14} />Conectar por código</button>
     </PageHeader>
     <div className="page-scroll network-scroll">
@@ -97,8 +107,8 @@ export function NetworkView() {
         {withoutApp.map((item) => <li key={item.ip + item.mac}><Network size={16} /><b>{item.ip}</b><small>MAC {item.mac}</small><button className="page-button" title="Abre a pasta do instalador para você copiar para o outro computador" onClick={() => void invoke("net_reveal_installer").catch((reason) => setError(String(reason)))}><Send size={13} />Enviar instalador</button></li>)}
       </ul> : <p className="network-hint">A tabela da rede local está vazia ou ainda carregando.</p>}
     </div>
-    {dialog?.kind === "code" && <CodeDialog onClose={() => setDialog(null)} />}
-    {dialog?.kind === "connect" && <ConnectDialog devices={devices} deviceId={dialog.deviceId} onClose={() => setDialog(null)} />}
+    {dialog?.kind === "code" && <CodeDialog address={status?.internet ? status.selfInfo.id : undefined} onClose={() => setDialog(null)} />}
+    {dialog?.kind === "connect" && <ConnectDialog devices={devices} deviceId={dialog.deviceId} internet={Boolean(status?.internet)} onClose={() => setDialog(null)} />}
   </section>;
 }
 
@@ -127,7 +137,7 @@ function DevicePanel({ device, onClose, onConnect, onError }: { device: NetDevic
   </aside>;
 }
 
-function CodeDialog({ onClose }: { onClose: () => void }) {
+function CodeDialog({ address, onClose }: { address?: string; onClose: () => void }) {
   const [code, setCode] = useState<string | null>(null);
   const [left, setLeft] = useState(300);
   const [failure, setFailure] = useState<string | null>(null);
@@ -142,15 +152,17 @@ function CodeDialog({ onClose }: { onClose: () => void }) {
       {failure ? <p className="node-note error">{failure}</p> : <>
         <p className="pair-code-big">{code ? formatPairCode(code) : "··· ···"}</p>
         <p className="network-hint center">Digite este código no outro computador, em Rede › Conectar por código.</p>
+        {address && <div className="network-address"><span>Fora de casa, mande também este endereço:</span><code>{address}</code><button className="page-button" onClick={() => void navigator.clipboard.writeText(address)}><Copy size={13} />Copiar</button></div>}
         <p className="network-hint center">{left > 0 ? `Vale por ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} · só uma vez` : "Expirou: feche e gere outro."}</p>
       </>}
     </div>
   </div>;
 }
 
-function ConnectDialog({ devices, deviceId, onClose }: { devices: NetDevice[]; deviceId?: string; onClose: () => void }) {
+function ConnectDialog({ devices, deviceId, internet, onClose }: { devices: NetDevice[]; deviceId?: string; internet: boolean; onClose: () => void }) {
   const [input, setInput] = useState("");
   const [target, setTarget] = useState(deviceId ?? "");
+  const [address, setAddress] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const candidates = devices.filter((device) => !device.self && !device.paired);
@@ -159,7 +171,8 @@ function ConnectDialog({ devices, deviceId, onClose }: { devices: NetDevice[]; d
     if (!code) return;
     setBusy(true);
     setMessage(null);
-    const order = target ? [target] : candidates.map((device) => device.id);
+    const typed = address.trim();
+    const order = typed ? [typed] : target ? [target] : candidates.map((device) => device.id);
     let last = "Nenhum computador encontrado na rede local. Abra o Open Assistant no outro computador e deixe \"Visível na rede\" ligado.";
     for (const id of order) {
       try {
@@ -182,6 +195,9 @@ function ConnectDialog({ devices, deviceId, onClose }: { devices: NetDevice[]; d
           {candidates.map((device) => <option key={device.id} value={device.id}>{device.name} · {DEVICE_KIND_LABEL[device.kind]}</option>)}
         </select>
       </label>
+      {internet && <label className="network-field"><span>Endereço do outro computador (só fora de casa)</span>
+        <input className="address" spellCheck={false} placeholder="cole o endereço que aparece no código dele" value={address} onChange={(event) => setAddress(event.target.value)} />
+      </label>}
       <label className="network-field"><span>Código de 6 dígitos</span>
         <input autoFocus inputMode="numeric" placeholder="000 000" value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void connect(); }} />
       </label>

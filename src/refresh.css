@@ -953,3 +953,8 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .remote-task-result { margin: 0; font-size: calc(12.5px * var(--fs-body, 1)); white-space: pre-wrap; }
 .remote-task-result.error { color: #ff8a8a; }
 .remote-task-card header b { font-size: calc(13px * var(--fs-body, 1)); font-weight: 600; }
+.network-address { display: flex; flex-direction: column; gap: 6px; align-items: center; font-size: calc(11.5px * var(--fs-body, 1)); color: var(--muted); }
+.network-address code { max-width: 100%; overflow-wrap: anywhere; padding: 6px 8px; border-radius: 6px; background: var(--card-hover, rgba(255,255,255,.06)); color: var(--text); font-size: calc(11px * var(--fs-body, 1)); }
+.network-field input.address { font-size: calc(12px * var(--fs-body, 1)); letter-spacing: 0; }
+.network-view .page-header { flex-wrap: wrap; row-gap: 8px; height: auto !important; min-height: 56px; padding-top: 8px; padding-bottom: 8px; }
+.network-view .page-actions { flex-wrap: wrap; justify-content: flex-end; }

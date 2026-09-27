@@ -2,7 +2,7 @@
 //! pareamento por código e chat remoto. Cada conversa entre dois apps abre uma conexão com um stream
 //! bidirecional; a primeira mensagem diz o que se quer (Hello / PairRequest / ChatRequest).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -62,6 +62,9 @@ pub struct NodeConfig {
     pub key: SecretKey,
     pub info: DeviceInfo,
     pub mdns: bool,
+    /// Pela internet (opcional, desligado por padrão): usa os servidores públicos do iroh (n0) para achar e
+    /// retransmitir. O conteúdo continua criptografado de ponta a ponta; o servidor só vê o endereço.
+    pub internet: bool,
     pub executor: ChatExecutor,
     pub agent: AgentExecutor,
     pub on_change: Arc<dyn Fn() + Send + Sync>,
@@ -74,10 +77,13 @@ struct Inner {
     trust: Mutex<TrustStore>,
     code: Mutex<Option<PairCode>>,
     seen: Mutex<HashMap<String, Seen>>,
+    /// Achados pela descoberta da rede local (o resto chegou pela internet).
+    lan: Mutex<HashSet<String>>,
     executor: ChatExecutor,
     agent: AgentExecutor,
     on_change: Arc<dyn Fn() + Send + Sync>,
     visible: AtomicBool,
+    internet: bool,
 }
 
 /// Linha da página Rede (mesmos campos que `NetDevice` no front).
@@ -121,7 +127,11 @@ fn io<E: std::fmt::Display>(error: E) -> String {
 impl Node {
     pub async fn start(config: NodeConfig) -> Result<Node, String> {
         // `Minimal`: nada é publicado na internet; na fase 1 só a rede local (mDNS) e endereços diretos.
-        let endpoint = Endpoint::builder(presets::Minimal).secret_key(config.key.clone()).alpns(vec![ALPN.to_vec()]).bind().await.map_err(io)?;
+        let endpoint = if config.internet {
+            Endpoint::builder(presets::N0).secret_key(config.key.clone()).alpns(vec![ALPN.to_vec()]).bind().await.map_err(io)?
+        } else {
+            Endpoint::builder(presets::Minimal).secret_key(config.key.clone()).alpns(vec![ALPN.to_vec()]).bind().await.map_err(io)?
+        };
         let mut info = config.info;
         info.id = endpoint.id().to_string();
         let node = Node {
@@ -132,10 +142,12 @@ impl Node {
                 trust: Mutex::new(TrustStore::load(&config.dir.join("confiaveis.json"))),
                 code: Mutex::new(None),
                 seen: Mutex::new(HashMap::new()),
+                lan: Mutex::new(HashSet::new()),
                 executor: config.executor,
                 agent: config.agent,
                 on_change: config.on_change,
                 visible: AtomicBool::new(true),
+                internet: config.internet,
             }),
         };
         let router = Router::builder(endpoint.clone()).accept(ALPN, Handler { node: node.clone() }).spawn();
@@ -157,6 +169,7 @@ impl Node {
             while let Some(event) = events.next().await {
                 if let DiscoveryEvent::Discovered { endpoint_info, .. } = event {
                     let addr = endpoint_info.to_endpoint_addr();
+                    node.inner.lan.lock().unwrap().insert(addr.id.to_string());
                     let node = node.clone();
                     tokio::spawn(async move {
                         let _ = node.hello(addr).await;
@@ -187,7 +200,7 @@ impl Node {
         let _ = std::fs::remove_dir_all(&dir);
         let info = DeviceInfo { id: String::new(), name: name.into(), kind: DeviceKind::Desktop, os: "Windows".into(), mac: None, gpu: None, models: vec!["qwen3.5:9b".into()] };
         let agent: AgentExecutor = Arc::new(|task: AgentTaskData| Box::pin(async move { if task.needs_confirm { Err("Recusado neste computador.".to_string()) } else { Ok(format!("feito: {}", task.task)) } }));
-        Node::start(NodeConfig { dir, key: SecretKey::generate(), info, mdns: false, executor: Arc::new(executor), agent, on_change: Arc::new(|| {}) }).await
+        Node::start(NodeConfig { dir, key: SecretKey::generate(), info, mdns: false, internet: false, executor: Arc::new(executor), agent, on_change: Arc::new(|| {}) }).await
     }
 
     pub fn id(&self) -> String {
@@ -208,6 +221,10 @@ impl Node {
 
     pub fn set_visible(&self, visible: bool) {
         self.inner.visible.store(visible, Ordering::SeqCst);
+    }
+
+    pub fn internet(&self) -> bool {
+        self.inner.internet
     }
 
     pub fn visible(&self) -> bool {
@@ -418,6 +435,8 @@ impl Node {
             permissions: None,
         }];
         let seen = self.inner.seen.lock().unwrap().clone();
+        let lan = self.inner.lan.lock().unwrap().clone();
+        let link = |id: &str| Some(if lan.contains(id) { "local" } else { "internet" }.to_string());
         let trust = self.inner.trust.lock().unwrap();
         for device in &trust.devices {
             let recent = seen.get(&device.info.id);
@@ -433,7 +452,7 @@ impl Node {
                 online: recent.is_some_and(|s| s.last.elapsed() < ONLINE_WINDOW),
                 paired: true,
                 is_self: false,
-                link: Some("local".into()),
+                link: link(&device.info.id),
                 permissions: Some(device.permissions.clone()),
             });
         }
@@ -452,7 +471,7 @@ impl Node {
                 online: s.last.elapsed() < ONLINE_WINDOW,
                 paired: false,
                 is_self: false,
-                link: Some("local".into()),
+                link: link(id),
                 permissions: None,
             });
         }
