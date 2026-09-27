@@ -202,6 +202,22 @@ Design: `docs/superpowers/specs/2026-09-27-rede-de-computadores-design.md` · Pl
 - [ ] Todos os fluxos da rede visíveis no Node Editor (seção 11)
 - Verificado 2026-09-27 com dois apps no mesmo PC (`OPEN_ASSISTANT_NET_DIR`/`OPEN_ASSISTANT_NET_NAME`): descoberta mDNS em ~10 ms, código errado recusado, pareamento, chat remoto qwen3.5:9b a ~100 tok/s em streaming, recusa sem permissão. Falta testar com um segundo computador de verdade.
 
+## 16. Novas ferramentas (pedido 2026-09-27)
+Design e testes de viabilidade: `docs/superpowers/specs/2026-09-27-novas-ferramentas-design.md`
+- [ ] GLM-5.3-Flash/FlashX como provedor de nuvem (Z.ai; 320B não roda neste PC)
+- [ ] Bonsai 2 27B local (7,8 GB, fork PrismML do llama.cpp, provedor `local_openai_chat`)
+- [ ] OpenViking como banco de contexto para modelos pequenos (AGPL: programa separado, instalado sob demanda)
+- [ ] Artemis: controlar celular Android pelo chat/nodes (MCP) e celular na página Rede
+- [ ] Unsloth: "Sonhos profundos" (QLoRA com conversas aprovadas → GGUF → Ollama)
+- [ ] Paperclip: time de agentes sobre os agentes do Open Assistant (adaptador HTTP local)
+
+## 17. Rede fase 3: instalação remota de atualizações (retomar quando a permissão for liberada)
+- [ ] Recebe o instalador só de computador pareado com "Instalar atualizações aqui" ligado; confere SHA-256 + assinatura Ed25519 da chave do dono
+- [ ] Cartão "PC-Sala quer instalar a versão X" no PC de destino (Instalar agora / Depois / Sempre permitir deste computador)
+- [ ] Instalação silenciosa do NSIS (`/S`) e reabrir o app; botão "Atualizar todos" na página Rede
+
+Obscura (medido em 2026-09-27): bom em sites de documentação/simples (react.dev, Hacker News, Wikipedia: 2–3× mais texto que o download simples, com links, ~1,5 s); fraco em sites comerciais pesados/anti-robô (g1 travava 35 s; Amazon e Mercado Livre devolvem página de bloqueio; resultados do YouTube não aparecem; a build "stealth" não resolveu). Corrigido: `read_url` roda os dois em paralelo, Obscura com limite de 10 s, e fica com o texto mais útil.
+
 ## Próximos passos sugeridos (sessão 7)
 - "Alinhar à grade": escolher o destino já na célula livre mais perto (hoje o ícone pode encaixar uma célula ao lado).
 - Robô de costas: hoje só o visor some; dá para desenhar as mãos atrás do corpo quando ele sobe a tela.
