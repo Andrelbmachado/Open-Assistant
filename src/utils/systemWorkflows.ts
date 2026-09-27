@@ -9,6 +9,7 @@ export const SYS_MEMORY_SAVE = "sys-memoria-salvar";
 export const SYS_REMOTE_CONTROL = "sys-rede-controle";
 export const SYS_CHAT_REPLY = "sys-chat-resposta";
 export const SYS_REMOTE_SERVE = "sys-rede-atender";
+export const SYS_DREAMS = "sys-sonhos";
 
 export interface SystemAgent { id: string; name: string; role: string; workflowId: string }
 
@@ -59,6 +60,18 @@ export const SYSTEM_WORKFLOWS: WorkflowDoc[] = [
     ],
     connections: [{ from: "pedido", to: "modelo" }, { from: "modelo", to: "resposta" }],
   }),
+  systemDoc(SYS_DREAMS, {
+    name: "Sonhos",
+    description: "À noite o modelo local revê o dia e propõe skills e conectores novos. Nada é ativado sem a sua aprovação.",
+    nodes: [
+      { id: "agendar", kind: "trace.start", title: "À noite (ou agora)", params: { about: "Uma vez por madrugada (2h–6h) com o app aberto, ou no botão Sonhar agora.", code: "src/components/DreamService.tsx" } },
+      { id: "ler", kind: "trace.step", title: "Ler o dia", params: { about: "Pedidos das conversas do dia e a memória (memoria-da-ia.md).", code: "src/components/DreamService.tsx" } },
+      { id: "propor", kind: "trace.step", title: "Modelo local propõe", params: { about: "Até 3 skills (SKILL.md) e 2 conectores (MCP), em JSON.", code: "src/utils/dreams.ts (buildDreamPrompt/parseDreamProposals)" } },
+      { id: "revisar", kind: "trace.step", title: "Fila de revisão", params: { about: "Aparece na tela Agentes › Agentes do sistema para você aprovar ou recusar.", code: "src/components/AgentsView.tsx" } },
+      { id: "ativar", kind: "trace.step", title: "Ativar o aprovado", params: { about: "Skill aprovada vira uma pasta nova de skills; conector aprovado leva você às Configurações de conectores.", code: "skill_create (Rust)" } },
+    ],
+    connections: [{ from: "agendar", to: "ler" }, { from: "ler", to: "propor" }, { from: "propor", to: "revisar" }, { from: "revisar", to: "ativar" }],
+  }),
   systemDoc(SYS_REMOTE_CONTROL, {
     name: "Controle remoto",
     description: "Outro computador da sua rede pede para o agente deste PC fazer algo. Sem a permissão \"Controlar este PC\", quem está aqui aprova antes.",
@@ -76,6 +89,7 @@ export const SYSTEM_AGENTS: SystemAgent[] = [
   { id: "sys-agente-chat", name: "Chat", role: "Decide quem responde cada mensagem: calculadora, ação rápida, agente, imagem, outro computador ou modelo.", workflowId: SYS_CHAT_REPLY },
   { id: "sys-agente-memoria", name: "Memória", role: "Guarda o que você pede para lembrar em memoria-da-ia.md.", workflowId: SYS_MEMORY_SAVE },
   { id: "sys-agente-atender", name: "Atender a rede", role: "Responde perguntas de outros computadores usando a placa de vídeo deste.", workflowId: SYS_REMOTE_SERVE },
+  { id: "sys-agente-sonhos", name: "Sonhos", role: "À noite revê o dia e propõe skills e conectores novos para você aprovar.", workflowId: SYS_DREAMS },
   { id: "sys-agente-controle", name: "Controle remoto", role: "Recebe tarefas de outros computadores da sua rede e pede sua aprovação.", workflowId: SYS_REMOTE_CONTROL },
 ];
 

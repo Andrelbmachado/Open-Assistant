@@ -1,7 +1,11 @@
-import { Bot, Cpu, Eye, Plus, TerminalSquare, Users, Workflow } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { Bot, Check, Cpu, Eye, LoaderCircle, Moon, Plug, Plus, ScrollText, TerminalSquare, Users, Workflow, X } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 import { useStore } from "../store/store";
 import { useTraceHistory } from "../store/systemTrace";
+import { setProposalStatus, useDreams } from "../store/dreams";
+import { DREAM_NOW_EVENT } from "./DreamService";
+import type { DreamProposal } from "../utils/dreams";
 import { SYSTEM_AGENTS, SYSTEM_WORKFLOWS } from "../utils/systemWorkflows";
 import { Dropdown } from "./Dropdown";
 import { PageHeader } from "./PageHeader";
@@ -14,6 +18,9 @@ const timeOf = (at: number) => new Date(at).toLocaleTimeString("pt-BR", { hour: 
 export function AgentsView() {
   const { state, dispatch } = useStore();
   const history = useTraceHistory();
+  const dreams = useDreams();
+  const [dreamError, setDreamError] = useState<string | null>(null);
+  const pending = dreams.proposals.filter((item) => item.status === "pendente");
   const [tab, setTab] = useState<AgentsTab>("usuario");
   const [chatFilter, setChatFilter] = useState("");
   const chatsInHistory = [...new Set(history.map((entry) => entry.chatId).filter((id): id is string => Boolean(id)))];
@@ -53,6 +60,12 @@ export function AgentsView() {
             <footer><span className="market-status instalado"><i className="agent-dot" />{last ? `${last.ok ? "Última vez" : "Falhou"} às ${timeOf(last.at)}` : "Ainda não rodou nesta sessão"}</span>{workflow && <small className="agent-meta">{workflow.name} · {workflow.nodes.length} nodes</small>}</footer>
           </article>; })}
         </div>
+        <div className="agents-history-head"><h3 className="agents-section-title">Propostas dos sonhos {pending.length > 0 && <span className="dream-count">{pending.length}</span>}</h3>
+          <button className="page-button" disabled={dreams.dreaming} onClick={() => { setDreamError(null); window.dispatchEvent(new Event(DREAM_NOW_EVENT)); }}>{dreams.dreaming ? <LoaderCircle size={13} className="spin" /> : <Moon size={13} />}{dreams.dreaming ? "Sonhando…" : "Sonhar agora"}</button>
+        </div>
+        {(dreamError ?? dreams.lastError) && <p className="node-note error">{dreamError ?? dreams.lastError}</p>}
+        {pending.length ? <ul className="dream-list">{pending.map((item) => <DreamRow key={item.id} item={item} onError={setDreamError} onConnector={() => dispatch({ type: "settings", open: true, tab: "mcp" })} />)}</ul>
+          : <p className="network-hint">Nenhuma proposta esperando. À noite o app revê o dia e sugere skills e conectores; ou clique em Sonhar agora.</p>}
         <div className="agents-history-head"><h3 className="agents-section-title">Execuções recentes</h3>
           {chatsInHistory.length > 0 && <select aria-label="Filtrar por conversa" value={chatFilter} onChange={(event) => setChatFilter(event.target.value)}>
             <option value="">Todas as conversas</option>
@@ -70,4 +83,20 @@ export function AgentsView() {
       </>}
     </div>
   </section>;
+}
+
+/** Uma proposta dos sonhos: aprovar cria a skill (ou abre os conectores); recusar tira da fila. */
+function DreamRow({ item, onError, onConnector }: { item: DreamProposal; onError: (message: string) => void; onConnector: () => void }) {
+  const [open, setOpen] = useState(false);
+  const approve = async () => {
+    if (item.kind === "skill") {
+      try { await invoke("skill_create", { id: item.name, description: item.description, body: item.content }); setProposalStatus(item.id, "aprovada"); }
+      catch (reason) { onError(String(reason)); }
+    } else { setProposalStatus(item.id, "aprovada"); onConnector(); }
+  };
+  return <li className="dream-row page-card">
+    <header>{item.kind === "skill" ? <ScrollText size={16} /> : <Plug size={16} />}<div><b>{item.kind === "skill" ? `/${item.name}` : item.name}</b><small>{item.kind === "skill" ? "Skill nova" : "Conector sugerido"} · {item.description}</small></div></header>
+    {open && <pre className="dream-content">{item.content}</pre>}
+    <footer><button className="page-button" onClick={() => setOpen((value) => !value)}>{open ? "Esconder" : "Ver detalhes"}</button><span /><button className="page-button" onClick={() => setProposalStatus(item.id, "recusada")}><X size={13} />Recusar</button><button className="page-button primary" onClick={() => void approve()}><Check size={13} />{item.kind === "skill" ? "Criar skill" : "Configurar"}</button></footer>
+  </li>;
 }

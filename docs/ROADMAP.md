@@ -165,9 +165,9 @@ Os editores de notes/nós (Node Editor / Node Workflow) passam a ser usados pelo
 - [x] Workflow **Salvar memória**: pedido no chat ("lembre disso…") → nó pega o texto da conversa → nó resume/extrai → nó grava em `memoria-da-ia.md`; visível no Node Editor daquela conversa
 - [x] Permitir abrir duas telas lado a lado (Chat + Node Editor) para ver a memória sendo salva enquanto conversa
 - [x] Cada conversa tem sua "trilha" de fluxos executados (parcial: "Execuções recentes" mostra a conversa; filtro por conversa e histórico em disco na fase 2)
-- [ ] Workflow **Sonhos**: à noite a IA lê as memórias do dia e propõe/cria novas skills e novos conectores para facilitar o dia seguinte (com revisão do usuário antes de ativar)
+- [x] Workflow **Sonhos** (fase 3): uma vez por madrugada (2h–6h, app aberto) ou no botão "Sonhar agora", o modelo local lê os pedidos do dia e a memória e propõe até 3 skills e 2 conectores; fila de revisão na tela Agentes; skill aprovada vira `skills\<nome>\SKILL.md` (nunca sobrescreve), conector aprovado abre Configurações › Conectores (nada é instalado sozinho)
 - [x] Converter as demais automações em workflows visuais (fase 2): fluxo "Responder no chat" (imagem, calculadora, outro computador, ação rápida, agente do PC com os passos, modelo) + "Atender outro computador" + "Controle remoto"; histórico guardado entre aberturas e filtro por conversa. MCP e voz aparecem como caminho do agente/modelo
-- [ ] Formato único de workflow (JSON de nós + arestas) usado tanto pelos agentes do sistema quanto pelos do usuário; eventos de execução emitidos pelo Rust para a UI
+- [x] Formato único de workflow (`WorkflowDoc`: nós + ligações) para agentes do sistema e do usuário; eventos do Rust (rede, Browser) acendem os fluxos na tela
 
 ## 12. Browser próprio: Obscura (pedido 2026-09-26)
 - [x] Adotar o Obscura (https://github.com/h4ckf0r0day/obscura.git) como o browser do Open Assistant (receita `obscura`, v0.2.3)

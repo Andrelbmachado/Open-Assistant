@@ -1189,6 +1189,30 @@ pub fn read_skill(app: AppHandle, name: String) -> Result<String, String> {
     Ok(truncate(strip_frontmatter(&text).trim(), 14_000))
 }
 
+/// Grava uma skill nova (`<raiz>/<id>/SKILL.md`). Nunca sobrescreve uma que já existe.
+pub fn write_new_skill(root: &Path, id: &str, description: &str, body: &str) -> Result<PathBuf, String> {
+    if id.is_empty() || id.len() > 48 || !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') || id.starts_with('-') {
+        return Err("Nome de skill inválido.".into());
+    }
+    let dir = root.join(id);
+    if dir.exists() {
+        return Err(format!("Já existe uma skill chamada {id}."));
+    }
+    let description = description.replace(['\r', '\n'], " ").replace('"', "'");
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let file = dir.join("SKILL.md");
+    fs::write(&file, format!("---\nname: {id}\ndescription: \"{description}\"\n---\n\n{}\n", body.trim())).map_err(|error| error.to_string())?;
+    Ok(file)
+}
+
+/// Skill aprovada pelo usuário (proposta dos "Sonhos"): cria a pasta e o SKILL.md.
+#[tauri::command]
+pub fn skill_create(app: AppHandle, id: String, description: String, body: String) -> Result<String, String> {
+    let dir = ensure_skill(&app)?;
+    let root = dir.parent().ok_or("pasta de skills indisponível")?;
+    write_new_skill(root, &id, &description, &body).map(|file| file.display().to_string())
+}
+
 /// Caminho rápido: devolve o intent quando a frase bate com um alias do catálogo.
 #[tauri::command]
 pub fn agent_route(app: AppHandle, text: String) -> Option<RouteMatch> {
@@ -1255,6 +1279,19 @@ mod tests {
 
     fn catalog() -> Catalog {
         parse_catalog(SKILL_FILES[1].1).expect("catálogo empacotado")
+    }
+
+    #[test]
+    fn new_skills_are_created_once_with_a_safe_name() {
+        let root = std::env::temp_dir().join(format!("oa-skills-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let file = write_new_skill(&root, "resumo-de-reunioes", "Quando pedir \"resumo\"\nde reunião", "1. Leia a ata").unwrap();
+        let text = fs::read_to_string(&file).unwrap();
+        assert!(text.starts_with("---\nname: resumo-de-reunioes\ndescription: \"Quando pedir 'resumo' de reunião\"\n---\n\n1. Leia a ata"));
+        assert!(write_new_skill(&root, "resumo-de-reunioes", "", "outro").unwrap_err().contains("Já existe"));
+        assert!(write_new_skill(&root, "..\\fora", "", "x").is_err());
+        assert!(write_new_skill(&root, "Maiuscula", "", "x").is_err());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

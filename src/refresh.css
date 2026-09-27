@@ -980,3 +980,15 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .browser-links button:hover { background: var(--card-hover, rgba(255,255,255,.06)); }
 .browser-text { margin: 0; padding: 0 12px 12px; overflow: auto; white-space: pre-wrap; font-size: calc(11.5px * var(--fs-body, 1)); color: var(--muted); }
 @container (max-width: 640px) { .browser-body { flex-direction: column; } .browser-side { width: auto; max-height: 45%; border-left: 0; border-top: 1px solid var(--card-border); } }
+
+/* Sonhos: fila de propostas (skills e conectores) para aprovar. */
+.dream-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 6px; padding: 0 5px; border-radius: 999px; background: var(--action, #0a84ff); color: #fff; font-size: 11px; }
+.dream-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dream-row { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.dream-row header { display: flex; align-items: flex-start; gap: 10px; }
+.dream-row header div { display: flex; flex-direction: column; gap: 2px; }
+.dream-row header b { font-size: calc(13px * var(--fs-body, 1)); }
+.dream-row header small { color: var(--muted); font-size: calc(11.5px * var(--fs-body, 1)); }
+.dream-row footer { display: flex; gap: 8px; }
+.dream-row footer span { flex: 1; }
+.dream-content { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; padding: 8px; border-radius: 8px; background: var(--card-hover, rgba(255,255,255,.05)); font-size: calc(11.5px * var(--fs-body, 1)); }

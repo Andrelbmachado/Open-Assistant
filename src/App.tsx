@@ -1,5 +1,6 @@
 import { WorkflowService } from "./components/WorkflowService";
 import { RemoteTaskHost } from "./components/RemoteTaskHost";
+import { DreamService } from "./components/DreamService";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect } from "react";
 import "./App.css";
@@ -25,5 +26,5 @@ export default function App() {
     window.addEventListener("keydown", shortcuts);
     return () => window.removeEventListener("keydown", shortcuts);
   }, [dispatch]);
-  return <div className="app-shell"><TitleBar /><div className="app-body"><Sidebar /><Workspace /></div><SettingsView /><CommandPalette /><WorkflowService /><RemoteTaskHost /></div>;
+  return <div className="app-shell"><TitleBar /><div className="app-body"><Sidebar /><Workspace /></div><SettingsView /><CommandPalette /><WorkflowService /><RemoteTaskHost /><DreamService /></div>;
 }

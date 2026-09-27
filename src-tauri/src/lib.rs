@@ -1721,6 +1721,7 @@ pub fn run() {
             network::remote_agent,
             network::net_set_internet,
             obscura::browser_open,
+            agent::skill_create,
             bitnet_chat,
             cloud_chat,
             tools::tools_status,
