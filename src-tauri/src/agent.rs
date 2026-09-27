@@ -1076,7 +1076,13 @@ Memória agora: RAM livre {:.1}/{:.1} GB, reservada livre {:.1}/{:.1} GB.",
         "read_url" => {
             let max = args.get("max_chars").and_then(Value::as_u64).unwrap_or(6000) as usize;
             // Obscura roda o JavaScript da página; sem ele (ou se falhar), o download simples de sempre.
-            outcome(super::obscura::read_page(app, &string("url"), max).or_else(|_| read_url(&string("url"), max)))
+            match super::obscura::read_page(app, &string("url"), max) {
+                Ok(text) => {
+                    super::obscura::show_agent_page(app, &string("url"), &text);
+                    outcome(Ok(text))
+                }
+                Err(_) => outcome(read_url(&string("url"), max)),
+            }
         }
         "read_skill_file" => outcome(read_skill_file(app, &string("path"))),
         "ask_user" => ToolOutcome { status: "ok".into(), text: string("question"), ..Default::default() },

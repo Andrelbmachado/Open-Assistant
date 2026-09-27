@@ -960,3 +960,23 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .network-view .page-actions { flex-wrap: wrap; justify-content: flex-end; }
 .agents-history-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .agents-history-head select { height: 28px; padding: 0 8px; border: 1px solid var(--card-border); border-radius: 7px; background: var(--card); color: var(--text); font-size: calc(11.5px * var(--fs-body, 1)); }
+
+/* Tela Browser (Obscura): barra de endereço, print da página e links. */
+.browser-view { display: flex; flex-direction: column; min-height: 0; background: var(--bg); container-type: inline-size; }
+.browser-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 76px; border-bottom: 1px solid var(--card-border); }
+.browser-address { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--card-border); border-radius: 9px; background: var(--card); color: var(--muted); }
+.browser-address input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font-size: calc(12.5px * var(--fs-body, 1)); outline: none; }
+.browser-agent-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--action, #0a84ff) 18%, transparent); color: var(--text); font-size: calc(11px * var(--fs-body, 1)); }
+.browser-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; color: var(--muted); text-align: center; font-size: calc(12.5px * var(--fs-body, 1)); }
+.browser-body { flex: 1; min-height: 0; display: flex; }
+.browser-shot { flex: 1; min-width: 0; overflow: auto; padding: 12px; }
+.browser-shot img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--card-border); background: #fff; }
+.browser-side { width: 260px; flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--card-border); }
+.browser-side-tabs { display: flex; gap: 4px; padding: 8px; }
+.browser-side-tabs button { flex: 1; height: 26px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: calc(11.5px * var(--fs-body, 1)); cursor: pointer; }
+.browser-side-tabs button.active { background: var(--card-hover, rgba(255,255,255,.06)); color: var(--text); }
+.browser-links { list-style: none; margin: 0; padding: 0 8px 8px; overflow: auto; }
+.browser-links button { width: 100%; text-align: left; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: calc(12px * var(--fs-body, 1)); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-links button:hover { background: var(--card-hover, rgba(255,255,255,.06)); }
+.browser-text { margin: 0; padding: 0 12px 12px; overflow: auto; white-space: pre-wrap; font-size: calc(11.5px * var(--fs-body, 1)); color: var(--muted); }
+@container (max-width: 640px) { .browser-body { flex-direction: column; } .browser-side { width: auto; max-height: 45%; border-left: 0; border-top: 1px solid var(--card-border); } }

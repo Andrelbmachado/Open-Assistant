@@ -173,7 +173,7 @@ Os editores de notes/nós (Node Editor / Node Workflow) passam a ser usados pelo
 - [x] Adotar o Obscura (https://github.com/h4ckf0r0day/obscura.git) como o browser do Open Assistant (receita `obscura`, v0.2.3)
 - [x] Avaliar o repositório: Apache-2.0, binário Windows v0.2.3 (obscura.exe + obscura-worker.exe), sem janela, CDP; vídeo pode não tocar
 - [x] Ligar o agente ao Obscura (fase 1: `read_url` e node Ler página em Markdown, plano B = download simples; `open_url` continua no Chrome). Fase 2: pesquisa e tela Browser ao vivo
-- [ ] Mostrar a navegação do agente no Node Editor (seção 11)
+- [x] Tela **Browser** (fase 2): barra de endereço/pesquisa, voltar/avançar, print renderizado pelo Obscura + links e texto da página; quando o agente lê uma página (`read_url`) ela aparece ali com o selo "agente". A leitura também aparece no fluxo do sistema "Responder no chat" (caminho do agente)
 
 ## 13. Voz padrão: AuK da Tencent Hunyuan (pedido 2026-09-26)
 - [ ] Adotar o AuK (https://github.com/Tencent-Hunyuan/AuK.git) como sistema de voz padrão do app (suspenso até existir versão com português ou build com Soxr para clonar a voz Piper)

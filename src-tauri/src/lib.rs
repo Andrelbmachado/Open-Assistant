@@ -1720,6 +1720,7 @@ pub fn run() {
             network::net_agent_reply,
             network::remote_agent,
             network::net_set_internet,
+            obscura::browser_open,
             bitnet_chat,
             cloud_chat,
             tools::tools_status,

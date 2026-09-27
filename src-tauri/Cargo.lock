@@ -4334,6 +4334,7 @@ dependencies = [
 name = "open-assistant"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "enigo",
  "image",
  "iroh",
