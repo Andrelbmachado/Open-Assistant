@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Bell, Bot, Check, ChevronDown, CirclePlay, Clock, Cloud, CloudDownload, CloudUpload, Copy, FileInput, FileOutput, Filter, FolderOpen, Frame, Globe, ImageIcon, LayoutTemplate, Link2, ListChecks, LoaderCircle, Maximize2, Merge, MessageSquare, Minus, Octagon, Pencil, Play, Plus, Search, Sparkles, Square, TerminalSquare, Trash2, Wand2, Workflow, X, type LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react";
+import { Bell, Bot, Check, ChevronDown, CirclePlay, Clock, Eye, Cloud, CloudDownload, CloudUpload, Copy, FileInput, FileOutput, Filter, FolderOpen, Frame, Globe, ImageIcon, LayoutTemplate, Link2, ListChecks, LoaderCircle, Maximize2, Merge, MessageSquare, Minus, Octagon, Pencil, Play, Plus, Search, Sparkles, Square, TerminalSquare, Trash2, Wand2, Workflow, X, type LucideIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react";
 import { useStore, type FlowFrame, type FlowNode, type WorkflowDoc } from "../store/store";
 import { useLocalModels } from "../store/localModelsStore";
 import { installTool, useTools } from "../store/toolsStore";
@@ -9,6 +9,7 @@ import { IMAGE_MODELS } from "../utils/imageCatalog";
 import { OLLAMA_MODEL_PREFIX } from "../utils/localCatalog";
 import { CATEGORY_LABEL, KIND_BY_ID, NODE_KINDS, NODE_WIDTH, nodeTitle, scheduleMinutes, validateWorkflow, WORKFLOW_TEMPLATES, withDefaults, type NodeCategory, type ParamSpec, type ParamValue } from "../utils/workflow";
 import { runWorkflowById } from "../utils/workflowService";
+import { allowedWhenReadOnly, isSystemWorkflow, SYSTEM_WORKFLOWS, systemWorkflow } from "../utils/systemWorkflows";
 import { isQAOffline } from "../utils/qaMode";
 import { useDismiss } from "../utils/useDismiss";
 import { Dropdown } from "./Dropdown";
@@ -115,9 +116,12 @@ function ParamField({ spec, value, onChange }: { spec: ParamSpec; value: ParamVa
  * "A cada X minutos" rodam sozinhos. Documentação: docs/NODE_EDITOR.md.
  */
 export function WorkflowCanvas({ areaId, workflowId }: { areaId: string; workflowId?: string }) {
-  const { state, dispatch } = useStore();
+  const { state, dispatch: storeDispatch } = useStore();
   const runs = useWorkflowRuns();
-  const doc: WorkflowDoc | undefined = state.workflows.find((item) => item.id === workflowId);
+  const readOnly = isSystemWorkflow(workflowId);
+  const doc: WorkflowDoc | undefined = state.workflows.find((item) => item.id === workflowId) ?? systemWorkflow(workflowId);
+  // Fluxo do sistema: pode navegar (zoom, arrastar a vista, trocar de workflow), mas nada é editado.
+  const dispatch = useCallback((action: Parameters<typeof storeDispatch>[0]) => { if (!readOnly || allowedWhenReadOnly(action.type)) storeDispatch(action); }, [readOnly, storeDispatch]);
   const [scale, setScale] = useState(.82);
   const [pan, setPan] = useState({ x: 20, y: 36 });
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
@@ -259,7 +263,7 @@ export function WorkflowCanvas({ areaId, workflowId }: { areaId: string; workflo
           {renaming
             ? <input autoFocus defaultValue={doc.name} aria-label="Nome do workflow" onBlur={(event) => { dispatch({ type: "wfRename", workflowId: id, name: event.target.value }); setRenaming(false); }} onKeyDown={(event) => { if (event.key === "Enter") (event.target as HTMLInputElement).blur(); if (event.key === "Escape") setRenaming(false); }} />
             : <button className={`workflow-project-button ${projectMenu ? "open" : ""}`} onClick={() => { setProjectMenu((open) => !open); setProjectQuery(""); }} title="Trocar o workflow desta área (as outras áreas não mudam)"><h2>{doc.name}</h2><ChevronDown size={14} /></button>}
-          {!renaming && <button className="icon-button wf-rename" onClick={() => setRenaming(true)} title="Renomear" aria-label="Renomear workflow"><Pencil size={13} /></button>}
+          {!renaming && !readOnly && <button className="icon-button wf-rename" onClick={() => setRenaming(true)} title="Renomear" aria-label="Renomear workflow"><Pencil size={13} /></button>}
           {projectMenu && <div className="workflow-project-menu oa-menu" role="menu" onPointerDown={(event) => event.stopPropagation()}>
             <label className="oa-menu-search"><Search size={13} /><input autoFocus value={projectQuery} placeholder="Buscar workflows e modelos…" onChange={(event) => setProjectQuery(event.target.value)} /></label>
             <div className="oa-menu-scroll">
@@ -269,24 +273,31 @@ export function WorkflowCanvas({ areaId, workflowId }: { areaId: string; workflo
                 <span className="oa-menu-text"><b>{item.name}</b><small>{item.nodes.length} {item.nodes.length === 1 ? "node" : "nodes"}{scheduleMinutes(item) ? ` · a cada ${scheduleMinutes(item)} min` : ""}</small></span>
                 {item.id === doc.id && <Check size={14} className="oa-menu-check" />}
               </button>)}
+              <span className="oa-menu-label">Fluxos do sistema</span>
+              {SYSTEM_WORKFLOWS.filter((item) => item.name.toLowerCase().includes(projectQuery.toLowerCase())).map((item) => <button key={item.id} role="menuitem" className={`oa-menu-item ${item.id === doc.id ? "active" : ""}`} onClick={() => { dispatch({ type: "wfOpen", workflowId: item.id, areaId }); setProjectMenu(false); }}>
+                <span className="oa-menu-icon"><Eye size={14} /></span>
+                <span className="oa-menu-text"><b>{item.name}</b><small>só visualização</small></span>
+                {item.id === doc.id && <Check size={14} className="oa-menu-check" />}
+              </button>)}
               <button role="menuitem" className="oa-menu-item" onClick={() => { dispatch({ type: "wfCreate", areaId }); setProjectMenu(false); }}><span className="oa-menu-icon accent"><Plus size={14} /></span><span className="oa-menu-text"><b>Novo workflow em branco</b></span></button>
               <span className="oa-menu-label">Modelos prontos</span>
               {WORKFLOW_TEMPLATES.filter((template) => `${template.name} ${template.description}`.toLowerCase().includes(projectQuery.toLowerCase())).map((template) => <button key={template.id} role="menuitem" className="oa-menu-item" onClick={() => { dispatch({ type: "wfCreate", doc: template.build(), areaId }); setProjectMenu(false); }}>
                 <span className="oa-menu-icon"><LayoutTemplate size={14} /></span><span className="oa-menu-text"><b>{template.name}</b><small>{template.description}</small></span>
               </button>)}
             </div>
-            {state.workflows.length > 1 && <div className="oa-menu-footer"><button role="menuitem" className="oa-menu-item danger" onClick={() => { if (confirm(`Apagar o workflow "${doc.name}"?`)) dispatch({ type: "wfDelete", workflowId: id }); setProjectMenu(false); }}><span className="oa-menu-icon"><Trash2 size={14} /></span><span className="oa-menu-text"><b>Apagar "{doc.name}"</b></span></button></div>}
+            {state.workflows.length > 1 && !readOnly && <div className="oa-menu-footer"><button role="menuitem" className="oa-menu-item danger" onClick={() => { if (confirm(`Apagar o workflow "${doc.name}"?`)) dispatch({ type: "wfDelete", workflowId: id }); setProjectMenu(false); }}><span className="oa-menu-icon"><Trash2 size={14} /></span><span className="oa-menu-text"><b>Apagar "{doc.name}"</b></span></button></div>}
           </div>}
         </div>
       </div>
       <div className="view-header-actions">
-        <span className={`connect-hint ${connecting ? "active" : ""}`}><Link2 size={13} />{connecting ? "Solte na entrada de outro node" : "Arraste da saída para a entrada"}</span>
+        {readOnly && <span className="workflow-readonly-note" title={doc.description}><Eye size={13} />Fluxo do sistema · só visualização — acende quando o app usa</span>}
+        {!readOnly && <span className={`connect-hint ${connecting ? "active" : ""}`}><Link2 size={13} />{connecting ? "Solte na entrada de outro node" : "Arraste da saída para a entrada"}</span>}
         {minutes && <button className={`workflow-schedule ${doc.scheduleEnabled === false ? "off" : "on"}`} onClick={() => dispatch({ type: "wfSetSchedule", workflowId: id, enabled: doc.scheduleEnabled === false })} title="Liga/desliga a execução automática (só com o app aberto)">
           <Clock size={13} /><span className="schedule-text">A cada {minutes} min · </span>{doc.scheduleEnabled === false ? "pausado" : "ligado"}
         </button>}
-        <button className={`primary-button workflow-run ${run?.running ? "running" : ""}`} onClick={runNow} disabled={!run?.running && issues.length > 0} title={issues.length ? issues.map((issue) => issue.message).join("\n") : "Executar agora"}>
+        {!readOnly && <button className={`primary-button workflow-run ${run?.running ? "running" : ""}`} onClick={runNow} disabled={!run?.running && issues.length > 0} title={issues.length ? issues.map((issue) => issue.message).join("\n") : "Executar agora"}>
           {run?.running ? <><Square size={12} />Parar</> : <><Play size={13} />Executar</>}
-        </button>
+        </button>}
       </div>
     </header>
     <div ref={shell} className={`canvas-shell n8n-canvas ${connecting ? "connecting" : ""}`} onPointerMove={onPointerMove}
@@ -306,15 +317,15 @@ export function WorkflowCanvas({ areaId, workflowId }: { areaId: string; workflo
       }}>
       <div className="canvas-grid" />
       {marquee && <div className="marquee-selection" style={{ left: marquee.x, top: marquee.y, width: marquee.width, height: marquee.height }} />}
-      <div className="node-library wf-toolbar" ref={paletteArea} onPointerDown={(event) => event.stopPropagation()}>
+      {!readOnly && <div className="node-library wf-toolbar" ref={paletteArea} onPointerDown={(event) => event.stopPropagation()}>
         <button className={paletteOpen ? "active" : ""} onClick={() => { setPaletteOpen((open) => !open); setPaletteQuery(""); }}><Plus size={14} />Adicionar node</button>
         <button onClick={() => dispatch({ type: "wfAddFrame", workflowId: id })}><Frame size={13} />Frame</button>
         {paletteOpen && <div className="node-palette oa-menu" role="menu">
           <label className="oa-menu-search"><Search size={13} /><input autoFocus value={paletteQuery} placeholder="Buscar node (ex.: pasta, IA, nuvem)…" onChange={(event) => setPaletteQuery(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Enter") { const first = NODE_KINDS.find((spec) => `${spec.label} ${spec.description} ${CATEGORY_LABEL[spec.category]}`.toLowerCase().includes(paletteQuery.toLowerCase())); if (first) addNode(first.kind); } }} /></label>
+            onKeyDown={(event) => { if (event.key === "Enter") { const first = NODE_KINDS.find((spec) => !spec.traceOnly && `${spec.label} ${spec.description} ${CATEGORY_LABEL[spec.category]}`.toLowerCase().includes(paletteQuery.toLowerCase())); if (first) addNode(first.kind); } }} /></label>
           <div className="oa-menu-scroll">
             {CATEGORY_ORDER.map((category) => {
-              const items = NODE_KINDS.filter((spec) => spec.category === category && `${spec.label} ${spec.description} ${CATEGORY_LABEL[category]}`.toLowerCase().includes(paletteQuery.toLowerCase()));
+              const items = NODE_KINDS.filter((spec) => !spec.traceOnly && spec.category === category && `${spec.label} ${spec.description} ${CATEGORY_LABEL[category]}`.toLowerCase().includes(paletteQuery.toLowerCase()));
               if (!items.length) return null;
               return <div key={category} className="node-palette-group">
                 <span className="oa-menu-label">{CATEGORY_LABEL[category]}</span>
@@ -325,7 +336,7 @@ export function WorkflowCanvas({ areaId, workflowId }: { areaId: string; workflo
             })}
           </div>
         </div>}
-      </div>
+      </div>}
       <div className="canvas-stage blender-stage" style={{ width: stage.width, height: stage.height, transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})` }}>
         {frames.map((frame) => <section key={frame.id} className={`workflow-frame ${selectedFrame === frame.id ? "selected" : ""}`} style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }} onPointerDown={(event) => { event.stopPropagation(); setSelectedFrame(frame.id); setSelectedNodeIds([]); setSelectedConnection(null); }}>
           <header onPointerDown={(event) => startFrameInteraction(event, frame, "frame")}><Frame size={13} /><strong>{frame.title}</strong><span>{nodes.filter((node) => node.x >= frame.x && node.y >= frame.y && node.x <= frame.x + frame.width && node.y <= frame.y + frame.height).length} nodes</span><button aria-label={`Excluir ${frame.title}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => dispatch({ type: "wfRemoveFrame", workflowId: id, id: frame.id })}><X size={12} /></button></header>
