@@ -933,3 +933,5 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .network-field input { font-size: calc(18px * var(--fs-body, 1)); letter-spacing: .12em; font-variant-numeric: tabular-nums; }
 .pair-code-big { margin: 6px 0 0; font-size: calc(40px * var(--fs-body, 1)); font-weight: 600; letter-spacing: .12em; font-variant-numeric: tabular-nums; text-align: center; color: var(--text); }
 .network-view { position: relative; }
+/* Pedido em andamento para outro computador: a linha da malha flui (mesma animação das ligações dos nodes). */
+.mesh-edge.flowing { stroke: var(--action, #0a84ff); stroke-width: 2.2; stroke-dasharray: 7 6; animation: connection-dash .6s linear infinite; }

@@ -185,8 +185,8 @@ Os editores de notes/nós (Node Editor / Node Workflow) passam a ser usados pelo
 
 ## 14. Referências de design (pedido 2026-09-26)
 - [x] Verificar se obsidianui.dev, designspells.com e bencho.dev são gratuitos (2026-09-26: os três são; obsidianui e bencho = MIT, designspells = galeria grátis só para inspiração)
-- [ ] Os gratuitos: analisar os designs e anotar o que aproveitar na UI do Open Assistant
-- [ ] Os pagos: descartar
+- [x] Os gratuitos: analisados em `docs/superpowers/specs/2026-09-27-referencias-design.md` (obsidianui não combina; bencho e designspells como inspiração, reimplementando no estilo do app). Primeiro detalhe feito: linha da malha da Rede flui durante um pedido remoto
+- [x] Os pagos: descartar (nenhum dos três é pago)
 
 ## 15. Rede de computadores: usar a GPU de outro PC (pedido 2026-09-27)
 Objetivo final: estar no MacBook, abrir o chat e usar o PC com RTX da rede no lugar de uma API paga; se pedir, ele controla o computador; instalador para os outros PCs e atualizações remotas.

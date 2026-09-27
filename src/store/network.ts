@@ -38,6 +38,26 @@ export function useNetDevices(): NetDevice[] {
   return useSyncExternalStore((listener) => { listeners.add(listener); return () => listeners.delete(listener); }, () => devices, () => devices);
 }
 
+/** Pedidos em andamento para outros computadores (a linha da malha "flui" enquanto houver). */
+let active: Record<string, number> = {};
+const activeListeners = new Set<() => void>();
+
+export function trackRemoteRequest(deviceId: string): () => void {
+  active = { ...active, [deviceId]: (active[deviceId] ?? 0) + 1 };
+  for (const listener of activeListeners) listener();
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    active = { ...active, [deviceId]: Math.max(0, (active[deviceId] ?? 1) - 1) };
+    for (const listener of activeListeners) listener();
+  };
+}
+
+export function useRemoteActivity(): Record<string, number> {
+  return useSyncExternalStore((listener) => { activeListeners.add(listener); return () => activeListeners.delete(listener); }, () => active, () => active);
+}
+
 /** Computadores que podem responder o chat daqui (pareados, online, com a IA liberada e com modelos). */
 export function usableRemoteDevices(list: NetDevice[]): NetDevice[] {
   return list.filter((device) => !device.self && device.paired && device.online && device.models.length > 0 && device.permissions?.usarIA !== false);

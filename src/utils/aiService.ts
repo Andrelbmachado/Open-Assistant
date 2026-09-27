@@ -5,6 +5,7 @@ import { BITNET_MODEL_PREFIX, OLLAMA_MODEL_PREFIX } from "./localCatalog";
 import { allCloudProviders, cloudDisplayName, parseCloudModel } from "./cloudModels";
 import { createOfflineQAReply, isQAOffline } from "./qaMode";
 import { parseRemoteModel } from "./network";
+import { trackRemoteRequest } from "../store/network";
 
 export interface AIMessage {
   role: "user" | "assistant" | "system";
@@ -173,7 +174,8 @@ export async function askAI(model: string, messages: AIMessage[], options: AskOp
       thinkLevel: effort?.think ? effort.thinkLevel : undefined,
       options: options.allowComputerControl ? { tools: [COMPUTER_TOOL] } : undefined,
     });
-    const result = await invoke<OllamaChatResult>(command, args);
+    const finished = remote ? trackRemoteRequest(remote.deviceId) : undefined;
+    const result = await invoke<OllamaChatResult>(command, args).finally(() => finished?.());
     const wantsComputer = Boolean(result.toolCalls?.some((call) => call.function?.name === COMPUTER_TOOL_NAME)) || hasComputerMarker(result.content);
     return {
       wantsComputer,

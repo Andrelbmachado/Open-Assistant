@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Eye, EyeOff, KeyRound, Link2, LoaderCircle, Network, Radar, Send, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { refreshNetDevices, useNetDevices } from "../store/network";
+import { refreshNetDevices, useNetDevices, useRemoteActivity } from "../store/network";
 import { formatPairCode, meshLayout, normalizePairCode, type NetDevice } from "../utils/network";
 import { DEVICE_KIND_LABEL, DeviceIcon } from "./DeviceIcon";
 import { PageHeader } from "./PageHeader";
@@ -18,6 +18,7 @@ const ICON = 46;
  */
 export function NetworkView() {
   const devices = useNetDevices();
+  const activity = useRemoteActivity();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [neighbors, setNeighbors] = useState<Neighbor[]>([]);
   const [visible, setVisible] = useState(true);
@@ -66,7 +67,7 @@ export function NetworkView() {
       <div className="network-main">
         <div className="network-mesh page-card" ref={mesh}>
           <svg viewBox={`0 0 ${size.width} ${size.height}`} role="img" aria-label="Malha de computadores conectados">
-            {layout.edges.map((edge) => { const a = layout.nodes.find((node) => node.id === edge.from)!; const b = layout.nodes.find((node) => node.id === edge.to)!; return <line key={`${edge.from}-${edge.to}`} className={`mesh-edge ${edge.link}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />; })}
+            {layout.edges.map((edge) => { const a = layout.nodes.find((node) => node.id === edge.from)!; const b = layout.nodes.find((node) => node.id === edge.to)!; return <line key={`${edge.from}-${edge.to}`} className={`mesh-edge ${edge.link} ${(byId.get(edge.from)?.self && activity[edge.to]) || (byId.get(edge.to)?.self && activity[edge.from]) ? "flowing" : ""}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />; })}
             {layout.nodes.map((node) => {
               const device = byId.get(node.id);
               if (!device) return null;

@@ -13,6 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { EFFORT_INFO, type EffortLevel } from "./effort";
 import { chatInvokeArgs, ollamaModelId } from "./aiService";
 import { parseRemoteModel } from "./network";
+import { trackRemoteRequest } from "../store/network";
 import { BITNET_MODEL_PREFIX } from "./localCatalog";
 import type { ActionCandidate } from "../store/store";
 import { parseMoveIntent } from "./moveIntent";
@@ -347,7 +348,9 @@ async function runAgentTask(options: AgentRunOptions): Promise<AgentResult> {
         thinkLevel: effort?.think ? effort.thinkLevel : undefined,
         options: { tools, numCtx: NUM_CTX },
       });
-      last = await invoke<ChatResult>(call.command, call.args);
+      const remote = parseRemoteModel(options.model);
+      const finished = remote ? trackRemoteRequest(remote.deviceId) : undefined;
+      last = await invoke<ChatResult>(call.command, call.args).finally(() => finished?.());
       if (last.cancelled || options.isCancelled()) return { text: "Tarefa interrompida.", steps, source: `Agente · Ollama (${modelId})` };
       const calls = last.toolCalls ?? [];
       if (!calls.length) {
