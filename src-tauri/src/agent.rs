@@ -1076,12 +1076,19 @@ Memória agora: RAM livre {:.1}/{:.1} GB, reservada livre {:.1}/{:.1} GB.",
         "read_url" => {
             let max = args.get("max_chars").and_then(Value::as_u64).unwrap_or(6000) as usize;
             // Obscura roda o JavaScript da página; sem ele (ou se falhar), o download simples de sempre.
-            match super::obscura::read_page(app, &string("url"), max) {
-                Ok(text) => {
-                    super::obscura::show_agent_page(app, &string("url"), &text);
+            // Download simples e Obscura (roda JavaScript, até 10 s) em paralelo; fica o texto mais útil.
+            let url = string("url");
+            let plain_url = url.clone();
+            let plain = std::thread::spawn(move || read_url(&plain_url, max));
+            let rich = super::obscura::read_page(app, &url, max);
+            let plain = plain.join().unwrap_or_else(|_| Err("download interrompido".into()));
+            let plain_error = plain.as_ref().err().cloned();
+            match super::obscura::best_text(rich.ok(), plain.ok()) {
+                Some(text) => {
+                    super::obscura::show_agent_page(app, &url, &text);
                     outcome(Ok(text))
                 }
-                Err(_) => outcome(read_url(&string("url"), max)),
+                None => outcome(Err(plain_error.unwrap_or_else(|| format!("Não foi possível abrir {url}.")))),
             }
         }
         "read_skill_file" => outcome(read_skill_file(app, &string("path"))),

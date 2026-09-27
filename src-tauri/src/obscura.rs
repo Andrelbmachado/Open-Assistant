@@ -49,20 +49,56 @@ fn executable(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Lê a página com o Obscura (roda o JavaScript). `Err` = não instalado ou falhou: quem chama usa o plano B.
+/// Roda o Obscura com prazo: sites pesados (g1, Amazon) podem travar 30 s+; passou do prazo, mata o processo.
+fn run_with_limit(command: &mut Command, limit: std::time::Duration) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Não foi possível rodar o Obscura: {error}"))?;
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    let out = std::thread::spawn(move || { let mut buf = Vec::new(); if let Some(pipe) = stdout.as_mut() { let _ = pipe.read_to_end(&mut buf); } buf });
+    let err = std::thread::spawn(move || { let mut buf = Vec::new(); if let Some(pipe) = stderr.as_mut() { let _ = pipe.read_to_end(&mut buf); } buf });
+    let deadline = std::time::Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("O Obscura passou de {} s nesta página.", limit.as_secs()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    Ok(std::process::Output { status, stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default() })
+}
+
+/// Tempo máximo do Obscura por página (o download simples roda junto e cobre o resto).
+pub const PAGE_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub fn read_page(app: &AppHandle, url: &str, max_chars: usize) -> Result<String, String> {
     let exe = executable(app)?;
-    let args = fetch_args(url, 15);
-    let output = Command::new(&exe)
-        .args(&args)
-        .current_dir(exe.parent().unwrap_or(std::path::Path::new(".")))
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|error| format!("Não foi possível rodar o Obscura: {error}"))?;
+    let args = fetch_args(url, 8);
+    let output = run_with_limit(Command::new(&exe).args(&args).current_dir(exe.parent().unwrap_or(std::path::Path::new("."))).creation_flags(CREATE_NO_WINDOW), PAGE_LIMIT)?;
     if !output.status.success() {
         return Err(format!("Obscura falhou: {}", String::from_utf8_lossy(&output.stderr).trim()));
     }
     let text = clean_output(&String::from_utf8_lossy(&output.stdout), max_chars.clamp(500, 20_000))?;
     Ok(format!("{}\n\n{text}", args[1]))
+}
+
+/// Escolhe o melhor texto entre o Obscura (roda JavaScript) e o download simples. Sites com proteção anti-robô
+/// devolvem ao Obscura uma página quase vazia ("Desculpe! Algo deu errado"): aí vence o texto mais longo.
+pub fn best_text(obscura: Option<String>, plain: Option<String>) -> Option<String> {
+    const ENOUGH: usize = 600;
+    match (obscura, plain) {
+        (Some(rich), _) if rich.chars().count() >= ENOUGH => Some(rich),
+        (Some(rich), Some(simple)) => Some(if simple.chars().count() > rich.chars().count() { simple } else { rich }),
+        (rich, simple) => rich.or(simple),
+    }
 }
 
 /// Print da página (PNG) renderizado pelo próprio Obscura, sem Chromium.
@@ -143,6 +179,18 @@ mod tests {
         let raw = "Título\n\n\n\n  linha 1  \n\nlinha 2\n";
         assert_eq!(clean_output(raw, 10_000).unwrap(), "Título\n\nlinha 1\n\nlinha 2");
         assert_eq!(clean_output(&"a".repeat(900), 500).unwrap().chars().count(), 501);
+    }
+
+    #[test]
+    fn picks_the_useful_text() {
+        let long = "x".repeat(700);
+        let blocked = "Desculpe! Algo deu errado".to_string();
+        let plain = "texto da página ".repeat(100);
+        assert_eq!(best_text(Some(long.clone()), Some(plain.clone())), Some(long));
+        assert_eq!(best_text(Some(blocked.clone()), Some(plain.clone())), Some(plain.clone()));
+        assert_eq!(best_text(None, Some(plain.clone())), Some(plain));
+        assert_eq!(best_text(Some(blocked.clone()), None), Some(blocked));
+        assert_eq!(best_text(None, None), None);
     }
 
     #[test]
