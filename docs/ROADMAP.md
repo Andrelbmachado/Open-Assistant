@@ -154,6 +154,53 @@ Resumo do que foi feito está em "Resultados verificados (sessão 3)" abaixo; o 
 - Verificado no exe (CDP): mover "teste mover" para meio direita / cima centro / volta (linha do tempo dos 13 estados e
   prints), Calculadora para cima direita e baixo esquerda, menu +, brilho, quadrados e voz com microfone falso.
 
+> **Planos de implementação das seções 11–14:** `docs/superpowers/plans/2026-09-26-00-indice-roadmap-11-14.md` (ordem, descobertas e links).
+
+## 11. Sistema visível: Node Editor dos agentes do sistema (pedido 2026-09-26, próxima sessão)
+Ideia: todo fluxo automatizado do Open Assistant deve ser visível em tempo real para nós e para o usuário final.
+Os editores de notes/nós (Node Editor / Node Workflow) passam a ser usados pelo próprio sistema.
+- [ ] Tela **Agentes** com duas abas: **Agentes do sistema** (criados pela equipe do Open Assistant) e **Agentes do usuário** (criados pelo usuário)
+- [ ] "Agentes do sistema" lista todos os workflows/Node Editors internos do app (só leitura no início, mas abríveis)
+- [ ] Execução ao vivo: quando um fluxo roda, o Node Editor dele acende os nós na ordem (entrada → processamento → saída), com os dados passando
+- [ ] Workflow **Salvar memória**: pedido no chat ("lembre disso…") → nó pega o texto da conversa → nó resume/extrai → nó grava em `memoria-da-ia.md`; visível no Node Editor daquela conversa
+- [ ] Permitir abrir duas telas lado a lado (Chat + Node Editor) para ver a memória sendo salva enquanto conversa
+- [ ] Cada conversa tem sua "trilha" de fluxos executados (qual workflow rodou, quando, com qual entrada/saída)
+- [ ] Workflow **Sonhos**: à noite a IA lê as memórias do dia e propõe/cria novas skills e novos conectores para facilitar o dia seguinte (com revisão do usuário antes de ativar)
+- [ ] Converter as demais automações existentes em workflows visuais: roteamento chat→agente (`matchAction`/`controlar_computador`), calculadora, agente do PC, MCP, voz, geração de imagem
+- [ ] Formato único de workflow (JSON de nós + arestas) usado tanto pelos agentes do sistema quanto pelos do usuário; eventos de execução emitidos pelo Rust para a UI
+
+## 12. Browser próprio: Obscura (pedido 2026-09-26)
+- [ ] Adotar o Obscura (https://github.com/h4ckf0r0day/obscura.git) como o browser do Open Assistant
+- [ ] Avaliar o repositório (licença, stack, build no Windows, API de automação) antes de integrar
+- [ ] Ligar o agente (`open_url`, pesquisa web, leitura de página) ao Obscura em vez do Chrome, mantendo o Chrome como alternativa
+- [ ] Mostrar a navegação do agente no Node Editor (seção 11)
+
+## 13. Voz padrão: AuK da Tencent Hunyuan (pedido 2026-09-26)
+- [ ] Adotar o AuK (https://github.com/Tencent-Hunyuan/AuK.git) como sistema de voz padrão do app
+- [ ] Avaliar o repositório (licença, requisitos de GPU/VRAM na RTX 5070, suporte a português, rodar local no Windows)
+- [ ] Integrar via Rust (como o sherpa-onnx em `src-tauri/src/speech.rs`), baixando a runtime/modelo para `%LOCALAPPDATA%\com.openassistant.windows\tools`
+- [ ] Manter o sherpa-onnx como alternativa/fallback e opção em Configurações
+- [ ] Testar de ponta a ponta com o microfone falso (E2E já existente) e com o agente
+- [ ] Mostrar o fluxo de voz no Node Editor (seção 11)
+
+## 14. Referências de design (pedido 2026-09-26)
+- [x] Verificar se obsidianui.dev, designspells.com e bencho.dev são gratuitos (2026-09-26: os três são; obsidianui e bencho = MIT, designspells = galeria grátis só para inspiração)
+- [ ] Os gratuitos: analisar os designs e anotar o que aproveitar na UI do Open Assistant
+- [ ] Os pagos: descartar
+
+## 15. Rede de computadores: usar a GPU de outro PC (pedido 2026-09-27)
+Objetivo final: estar no MacBook, abrir o chat e usar o PC com RTX da rede no lugar de uma API paga; se pedir, ele controla o computador; instalador para os outros PCs e atualizações remotas.
+Design: `docs/superpowers/specs/2026-09-27-rede-de-computadores-design.md` · Plano da fase 1: `docs/superpowers/plans/2026-09-27-rede-fase1-local.md`
+- [ ] Fase 1: identidade por chave (MAC só como informação), descoberta na rede local, conexão por código de 6 dígitos (tipo AnyDesk)
+- [ ] Fase 1: página **Rede** aberta pelo ícone de computador da barra lateral: malha com ícones próprios (PC de mesa, notebook Windows, MacBook, Mac de mesa), nome e linha entre cada par
+- [ ] Fase 1: aparelhos da rede sem o app (IP + MAC) com "Enviar instalador"
+- [ ] Fase 1: chat e agente usando o modelo de outro computador (resposta em streaming; o agente controla o computador onde está o chat)
+- [ ] Fase 2: mandar tarefas para o agente de outro computador (permissão "Controlar este PC", confirmação no PC controlado)
+- [ ] Fase 3: instalador (`.exe` NSIS) e atualizações assinadas empurradas pelo computador dono para os PCs abaixo dele
+- [ ] Fase 4: conexão fora de casa (código fixo, conta, servidor de diretório/retransmissão da empresa): decisão de infraestrutura pendente
+- [ ] Fase 5: app para macOS (necessário para o cenário "estou no MacBook")
+- [ ] Todos os fluxos da rede visíveis no Node Editor (seção 11)
+
 ## Próximos passos sugeridos (sessão 7)
 - "Alinhar à grade": escolher o destino já na célula livre mais perto (hoje o ícone pode encaixar uma célula ao lado).
 - Robô de costas: hoje só o visor some; dá para desenhar as mãos atrás do corpo quando ele sobe a tela.
