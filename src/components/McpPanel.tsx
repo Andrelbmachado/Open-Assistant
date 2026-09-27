@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Check, Plus, Power, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import { Check, Copy, Network, Plus, Power, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { resetAgentSetup } from "../utils/agentRunner";
 import { isQAOffline } from "../utils/qaMode";
@@ -15,6 +15,7 @@ export function McpPanel() {
   const [message, setMessage] = useState("");
   const [jsonText, setJsonText] = useState("");
   const [editing, setEditing] = useState(false);
+  const [netCommand, setNetCommand] = useState("");
 
   const config: McpConfig = { mcpServers: Object.fromEntries((overview?.servers ?? []).map((server) => [server.name, { command: server.command, args: server.args, ...(server.disabled ? { disabled: true } : {}) }])) };
 
@@ -24,7 +25,10 @@ export function McpPanel() {
     catch (error) { setMessage(String(error)); }
   }
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+    if (!isQAOffline()) void invoke<string>("net_mcp_command").then(setNetCommand).catch(() => undefined);
+  }, []);
 
   async function save(next: McpConfig, note: string) {
     try {
@@ -67,6 +71,21 @@ export function McpPanel() {
           <button className="flat-button icon-only" title={`Remover ${server.name}`} onClick={() => save(removeServer(config, server.name), `${server.name} removido.`)}><Trash2 size={13} /></button>
         </div>
       </article>)}
+    </div>
+
+    <h5 className="model-section-title">Este app como MCP</h5>
+    <div className="runtime-list model-list">
+      <article className="model-card tool-card">
+        <span className="runtime-logo"><Network size={15} /></span>
+        <div className="runtime-copy">
+          <div><h4>Rede do Open Assistant</h4></div>
+          <p>Uma IA (Claude Code, Codex…) lê o diagnóstico e o log da rede, reconecta computadores e manda tarefas para outro PC ou Mac. Ferramentas: rede_diagnostico, rede_log, rede_dispositivos, rede_reconectar, rede_codigo, rede_internet, rede_tarefa.</p>
+          {netCommand && <small><code>{netCommand}</code></small>}
+        </div>
+        <div className="model-card-actions">
+          <button className="flat-button" disabled={!netCommand} onClick={() => void navigator.clipboard.writeText(netCommand).then(() => setMessage("Comando copiado: cole no terminal onde o Claude Code está instalado."))}><Copy size={13} />Copiar comando</button>
+        </div>
+      </article>
     </div>
 
     <h5 className="model-section-title">Sugeridos</h5>

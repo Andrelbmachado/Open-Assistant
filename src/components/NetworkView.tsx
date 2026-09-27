@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Copy, Download, History, KeyRound, Link2, LoaderCircle, Network, Plus, Radar, RefreshCw, Send, Trash2, X } from "lucide-react";
+import { ClipboardCopy, Copy, Download, FolderOpen, Globe, History, KeyRound, Link2, LoaderCircle, Network, Plus, Radar, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { refreshNetDevices, useNetDevices, useRemoteActivity } from "../store/network";
 import { connectLink, formatPairCode, lastSeenLabel, meshLayout, normalizePairCode, parseConnectLink, type NetDevice } from "../utils/network";
@@ -82,6 +82,8 @@ export function NetworkView() {
   const history = devices.filter((device) => !device.self && device.paired).sort((a, b) => Number(b.online) - Number(a.online) || (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
   const discovered = devices.filter((device) => !device.self && !device.paired && device.online);
   const updatable = history.filter((device) => device.online);
+  // Pareados offline que nunca foram vistos por IP da rede local: sem Internet, este PC não tem como achá-los.
+  const neverLocal = status && !status.internet ? history.filter((device) => !device.online && !(device.addrs ?? []).some((addr) => !addr.startsWith("relay:"))) : [];
 
   const toggleVisible = () => {
     if (!status) return;
@@ -90,15 +92,42 @@ export function NetworkView() {
     void invoke("net_set_visible", { visible }).catch(() => setStatus({ ...status }));
   };
 
-  const toggleInternet = () => {
-    if (!status) return;
-    const enabled = !status.internetSaved;
-    if (enabled && !confirm("Conectar pela internet usa os servidores públicos do iroh (empresa n0) para achar este computador fora de casa. O conteúdo continua criptografado de ponta a ponta; o servidor só vê o endereço de rede. Vale ao reabrir o app. Ligar?")) return;
-    void invoke("net_set_internet", { enabled }).then(() => setStatus({ ...status, internetSaved: enabled })).catch((reason) => setNotice({ text: String(reason), error: true }));
+  const [switchingInternet, setSwitchingInternet] = useState(false);
+  /** Liga/desliga na hora: a rede reinicia sem reabrir o app. */
+  const setInternet = async (enabled: boolean) => {
+    if (enabled && !confirm("Conectar pela internet usa os servidores públicos do iroh (empresa n0) para achar este computador fora de casa. O conteúdo continua criptografado de ponta a ponta; o servidor só vê o endereço de rede. Ligar?")) return;
+    setSwitchingInternet(true);
+    try {
+      await invoke("net_set_internet", { enabled });
+      setNotice({ text: enabled ? "Internet ligada: reconectando os computadores…" : "Internet desligada: só a rede local." });
+      await refreshNetDevices();
+    } catch (reason) {
+      setNotice({ text: String(reason), error: true });
+    }
+    loadStatus();
+    setSwitchingInternet(false);
+  };
+  const toggleInternet = () => { if (status && !switchingInternet) void setInternet(!status.internetSaved); };
+
+  const reconnectAll = async () => {
+    setAddOpen(false);
+    const answered = await invoke<string[]>("net_reconnect_all").catch(() => [] as string[]);
+    await refreshNetDevices();
+    const total = devices.filter((device) => !device.self && device.paired).length;
+    setNotice({ text: total ? `${answered.length} de ${total} computadores responderam.` : "Nenhum computador no histórico ainda.", error: total > 0 && answered.length < total });
+  };
+
+  const copyReport = async () => {
+    setAddOpen(false);
+    try {
+      await navigator.clipboard.writeText(await invoke<string>("net_report"));
+      setNotice({ text: "Relatório copiado: cole na conversa com a IA." });
+    } catch (reason) { setNotice({ text: String(reason), error: true }); }
   };
 
   const runScan = async () => {
     setScan((current) => ({ loading: true, neighbors: current?.neighbors ?? [] }));
+    await invoke("net_reconnect_all").catch(() => undefined);
     await refreshNetDevices();
     const neighbors = await invoke<Neighbor[]>("net_lan_neighbors").catch(() => [] as Neighbor[]);
     setScan({ loading: false, neighbors });
@@ -141,7 +170,7 @@ export function NetworkView() {
   return <section className="view page-view network-view remote-view">
     <PageHeader eyebrow="Sua rede" title="Remoto" icon={<Network size={17} />}>
       <Switch on={Boolean(status?.visible)} label="Visível" title="Outros computadores da rede local conseguem ver este" onChange={toggleVisible} />
-      <Switch on={Boolean(status?.internetSaved)} label={status && status.internetSaved !== status.internet ? "Internet · reabra" : "Internet"} title="Conectar computadores fora da rede de casa (vale ao reabrir o app)" onChange={toggleInternet} />
+      <Switch on={Boolean(status?.internetSaved)} label={switchingInternet ? "Internet…" : "Internet"} title="Conectar computadores fora da rede de casa (liga na hora)" onChange={toggleInternet} />
       <button className={`page-button ${scan ? "active" : ""}`} onClick={() => void runScan()} title="Procura aparelhos na rede local"><Radar size={14} className={scan?.loading ? "spin" : ""} />Scan</button>
       <button className="page-button" disabled={!installer || !updatable.length} onClick={updateAll} title={installer ? `Envia ${installer.fileName} para os computadores conectados e online` : "Nenhum instalador na pasta Instalador ao lado do app"}><Download size={14} />Atualizar todos</button>
       <div className="remote-add">
@@ -151,11 +180,15 @@ export function NetworkView() {
           <div className="remote-add-menu page-card" role="menu">
             <button role="menuitem" onClick={() => { setAddOpen(false); setDialog({ kind: "code" }); }}><KeyRound size={14} /><span><b>Conectar por código</b><small>Computador na mesma rede</small></span></button>
             <button role="menuitem" onClick={() => { setAddOpen(false); setDialog({ kind: "link" }); }}><Link2 size={14} /><span><b>Conectar por link</b><small>Cole o link ou o endereço do outro</small></span></button>
+            <button role="menuitem" onClick={() => void reconnectAll()}><RefreshCw size={14} /><span><b>Reconectar todos</b><small>Sem código, pelos endereços salvos</small></span></button>
             <span className="menu-section-label"><History size={12} />Já conectados</span>
             {history.length ? history.map((device) => <button key={device.id} role="menuitem" onClick={() => void reconnect(device)}>
               <DeviceIcon kind={device.kind} size={20} /><span><b>{device.name}</b><small>{device.online ? "online" : `visto ${lastSeenLabel(device.lastSeen)}`}</small></span>
               {reconnecting === device.id ? <LoaderCircle size={13} className="spin" /> : <i className={`remote-dot ${device.online ? "on" : ""}`} />}
             </button>) : <small className="remote-add-empty">Nenhum ainda.</small>}
+            <span className="menu-section-label">Diagnóstico</span>
+            <button role="menuitem" onClick={() => void copyReport()}><ClipboardCopy size={14} /><span><b>Copiar relatório para IA</b><small>Estado e últimas 80 linhas do log</small></span></button>
+            <button role="menuitem" onClick={() => { setAddOpen(false); void invoke("net_open_logs").catch((reason) => setNotice({ text: String(reason), error: true })); }}><FolderOpen size={14} /><span><b>Abrir logs da rede</b><small>Pasta rede (log.jsonl, estado.json)</small></span></button>
           </div>
         </>}
       </div>
@@ -174,7 +207,7 @@ export function NetworkView() {
         {layout.nodes.map((node) => {
           const device = byId.get(node.id);
           if (!device) return null;
-          return <g key={node.id} className={`mesh-node ${device.online ? "" : "offline"} ${device.self ? "self" : ""} ${device.paired ? "" : "unpaired"} ${selectedId === node.id ? "selected" : ""}`} transform={`translate(${node.x - ICON / 2}, ${node.y - ICON / 2})`} onClick={() => setSelectedId(node.id)} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") setSelectedId(node.id); }}>
+          return <g key={node.id} className={`mesh-node ${device.online ? "" : "offline"} ${device.self ? "self" : ""} ${device.paired ? "" : "unpaired"} ${selectedId === node.id ? "selected" : ""}`} transform={`translate(${node.x - ICON / 2}, ${node.y - ICON / 2})`} onClick={() => setSelectedId(node.id)} onDoubleClick={() => { if (device.paired && !device.self && !device.online) void reconnect(device); }} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") setSelectedId(node.id); }}>
             <circle className="mesh-halo" cx={ICON / 2} cy={ICON / 2} r={ICON / 2 + 10} />
             <DeviceIcon kind={device.kind} size={ICON} />
             <circle className={`mesh-dot ${device.online ? "on" : "off"}`} cx={ICON - 2} cy={4} r={4} />
@@ -183,6 +216,7 @@ export function NetworkView() {
           </g>;
         })}
       </svg>
+      {neverLocal.length > 0 && <div className="remote-hint page-card"><Globe size={15} /><span><b>{neverLocal.map((device) => device.name).join(", ")}</b> {neverLocal.length === 1 ? "nunca apareceu" : "nunca apareceram"} na rede local deste PC. Para conectar de outra rede, ligue <b>Internet</b> nos dois computadores.</span><button className="page-button primary" disabled={switchingInternet} onClick={() => void setInternet(true)}>Ligar Internet</button></div>}
       {history.length === 0 && <p className="remote-empty">Nenhum computador conectado ainda. Use <b>+</b> para conectar por código ou link, ou <b>Scan</b> para procurar na rede.</p>}
 
       {selected && !selected.self && <DeviceCard device={selected} installer={installer} send={sends[selected.id]} reconnecting={reconnecting === selected.id}

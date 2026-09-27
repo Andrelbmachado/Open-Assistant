@@ -20,6 +20,8 @@ export interface NetDevice {
   permissions?: { usarIA: boolean; controlar: boolean; atualizar: boolean };
   /** Última vez que respondeu (segundos desde 1970): histórico dos computadores já conectados. */
   lastSeen?: number;
+  /** Endereços salvos no histórico (`ip:porta` ou `relay:<url>`). */
+  addrs?: string[];
 }
 
 /** Link para conectar outro computador de uma vez: endereço deste + o código atual. */

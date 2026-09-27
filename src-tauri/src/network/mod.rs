@@ -1,6 +1,9 @@
 //! Rede de computadores do Open Assistant (ROADMAP §15): um app usa a IA (Ollama/GPU) de outro.
 //! Design: docs/superpowers/specs/2026-09-27-rede-de-computadores-design.md
 pub mod identity;
+pub mod control;
+pub mod mcp;
+pub mod netlog;
 pub mod node;
 pub mod pairing;
 pub mod protocol;
@@ -9,7 +12,7 @@ pub mod update;
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::AtomicBool;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -38,8 +41,10 @@ pub const AGENT_TASK_EVENT: &str = "net-agent-task";
 
 #[derive(Default)]
 pub struct NetState {
-    node: OnceLock<Node>,
-    error: OnceLock<String>,
+    /// Troca de nó ao ligar/desligar Internet (sem reabrir o app).
+    node: RwLock<Option<Node>>,
+    error: Mutex<Option<String>>,
+    restarting: tokio::sync::Mutex<()>,
     /// Tarefas remotas esperando a tela responder (`net_agent_reply`).
     pending: Mutex<HashMap<String, tokio::sync::oneshot::Sender<Result<String, String>>>>,
     /// Ofertas de atualização esperando a tela responder (`net_update_reply`).
@@ -81,8 +86,20 @@ struct AgentTaskEvent {
 }
 
 impl NetState {
-    pub fn node(&self) -> Result<&Node, String> {
-        self.node.get().ok_or_else(|| self.error.get().cloned().unwrap_or_else(|| "A rede ainda está iniciando.".into()))
+    pub fn node(&self) -> Result<Node, String> {
+        if let Some(node) = self.node.read().map_err(|_| "estado da rede indisponível")?.clone() {
+            return Ok(node);
+        }
+        Err(self.error.lock().ok().and_then(|error| error.clone()).unwrap_or_else(|| "A rede ainda está iniciando.".into()))
+    }
+
+    fn set_node(&self, node: Option<Node>, error: Option<String>) {
+        if let Ok(mut current) = self.node.write() {
+            *current = node;
+        }
+        if let Ok(mut current) = self.error.lock() {
+            *current = error;
+        }
     }
 }
 
@@ -92,21 +109,128 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         match start_node(&app).await {
             Ok(node) => {
-                let _ = app.state::<NetState>().node.set(node.clone());
+                ensure_firewall_rule(&node);
+                app.state::<NetState>().set_node(Some(node), None);
                 let _ = app.emit(DEVICES_EVENT, ());
-                // Modelos do Ollama deste computador (o que os outros podem usar), atualizados a cada minuto.
-                loop {
-                    let models = tauri::async_runtime::spawn_blocking(crate::ollama_model_names).await.unwrap_or_default();
-                    node.set_models(models);
-                    tokio::time::sleep(Duration::from_secs(60)).await;
-                }
             }
             Err(error) => {
                 crate::logs::error("rede", &format!("não iniciou: {error}"));
-                let _ = app.state::<NetState>().error.set(format!("A rede não iniciou: {error}"));
+                app.state::<NetState>().set_node(None, Some(format!("A rede não iniciou: {error}")));
+                return;
             }
         }
+        control::start(&app);
+        // `estado.json` a cada 5 s (diagnóstico por IA / MCP com o app fechado).
+        let state_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                write_state_file(&state_app);
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+        // Modelos do Ollama deste computador (o que os outros podem usar), atualizados a cada minuto.
+        loop {
+            let models = tauri::async_runtime::spawn_blocking(crate::ollama_model_names).await.unwrap_or_default();
+            if let Ok(node) = app.state::<NetState>().node() {
+                node.set_models(models);
+            }
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
     });
+}
+
+/// Fecha o nó e abre de novo com a configuração salva (ex.: Internet ligada/desligada), sem reabrir o app.
+pub async fn restart_node(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<NetState>();
+    let _guard = state.restarting.lock().await;
+    let old = state.node.write().map_err(|_| "estado da rede indisponível")?.take();
+    if let Some(old) = old {
+        old.shutdown().await;
+        drop(old);
+    }
+    match start_node(app).await {
+        Ok(node) => {
+            let models = tauri::async_runtime::spawn_blocking(crate::ollama_model_names).await.unwrap_or_default();
+            node.set_models(models);
+            ensure_firewall_rule(&node);
+            state.set_node(Some(node), None);
+            let _ = app.emit(DEVICES_EVENT, ());
+            Ok(())
+        }
+        Err(error) => {
+            crate::logs::error("rede", &format!("não reiniciou: {error}"));
+            state.set_node(None, Some(format!("A rede não iniciou: {error}")));
+            let _ = app.emit(DEVICES_EVENT, ());
+            Err(error)
+        }
+    }
+}
+
+/// Estado para diagnóstico: o que o nó sabe + onde estão os arquivos.
+pub fn state_snapshot(node: &Node) -> serde_json::Value {
+    let dir = node.dir();
+    let mut value = node.diagnostics();
+    value["atualizadoEm"] = serde_json::Value::from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0));
+    value["servicoRodando"] = serde_json::Value::Bool(true);
+    value["arquivos"] = serde_json::json!({
+        "log": dir.join(netlog::LOG_FILE),
+        "logAnterior": dir.join(netlog::OLD_LOG_FILE),
+        "estado": dir.join(STATE_FILE),
+        "confiaveis": dir.join("confiaveis.json"),
+        "porta": dir.join(node::PORT_FILE),
+        "config": dir.join("config.json"),
+    });
+    value
+}
+
+pub const STATE_FILE: &str = "estado.json";
+
+fn write_state_file(app: &AppHandle) {
+    if let Ok(node) = app.state::<NetState>().node() {
+        let snapshot = state_snapshot(&node);
+        if let Ok(text) = serde_json::to_string_pretty(&snapshot) {
+            let _ = std::fs::write(node.dir().join(STATE_FILE), text);
+        }
+    }
+}
+
+/// Regra do Firewall do Windows para a porta UDP fixa (Privado; Público só com Internet). Precisa de administrador:
+/// sem permissão, fica registrado no log e vale a regra do programa que o Windows cria ao abrir o app.
+fn ensure_firewall_rule(node: &Node) {
+    let port = node.port();
+    if port == 0 {
+        return;
+    }
+    let profile = if node.internet() { "private,public" } else { "private" };
+    let log_node = node.clone();
+    std::thread::spawn(move || {
+        let name = format!("Open Assistant rede (UDP {port}, {profile})");
+        let exists = std::process::Command::new("netsh")
+            .args(["advfirewall", "firewall", "show", "rule", &format!("name={name}")])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if exists {
+            return;
+        }
+        let added = std::process::Command::new("netsh")
+            .args(["advfirewall", "firewall", "add", "rule", &format!("name={name}"), "dir=in", "action=allow", "protocol=UDP", &format!("localport={port}"), &format!("profile={profile}")])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        match added {
+            Ok(output) if output.status.success() => log_node.log().info("firewall_regra_criada", serde_json::json!({ "porta": port, "perfil": profile })),
+            _ => log_node.log().info("firewall_sem_regra", serde_json::json!({ "porta": port, "perfil": profile, "dica": "Sem administrador não dá para criar a regra da porta; vale a regra do programa (o Windows pergunta na primeira abertura)." })),
+        }
+    });
+}
+
+/// Registra no log da rede o resultado de um comando da tela/MCP.
+pub fn log_command<T>(node: &Node, command: &str, device_id: Option<&str>, result: &Result<T, String>) {
+    match result {
+        Ok(_) => node.log().info("comando", serde_json::json!({ "comando": command, "deviceId": device_id })),
+        Err(error) => node.log().warn("comando_falhou", serde_json::json!({ "comando": command, "deviceId": device_id, "erro": error })),
+    }
 }
 
 async fn start_node(app: &AppHandle) -> Result<Node, String> {
@@ -205,6 +329,7 @@ async fn start_node(app: &AppHandle) -> Result<Node, String> {
         agent,
         update_asker,
         update_installer,
+        reconnect_loop: true,
         on_change: Arc::new(move || {
             let _ = emitter.emit(DEVICES_EVENT, ());
         }),
@@ -236,25 +361,35 @@ fn load_config(dir: &std::path::Path) -> NetConfig {
 pub struct NetStatus {
     self_info: identity::DeviceInfo,
     visible: bool,
-    /// Modo internet ligado agora (o que o app abriu usando).
+    /// Modo internet ligado agora.
     internet: bool,
-    /// Modo internet escolhido (vale ao reabrir o app).
+    /// Modo internet escolhido (igual ao de agora: ligar/desligar reinicia o nó na hora).
     internet_saved: bool,
+    port: u16,
 }
 
 #[tauri::command]
 pub fn net_status(app: AppHandle, state: State<NetState>) -> Result<NetStatus, String> {
     let node = state.node()?;
-    Ok(NetStatus { self_info: node.info(), visible: node.visible(), internet: node.internet(), internet_saved: load_config(&net_dir(&app)?).internet })
+    Ok(NetStatus { self_info: node.info(), visible: node.visible(), internet: node.internet(), internet_saved: load_config(&net_dir(&app)?).internet, port: node.port() })
 }
 
-/// Liga/desliga a conexão pela internet (vale ao reabrir o app).
-#[tauri::command]
-pub fn net_set_internet(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let dir = net_dir(&app)?;
+/// Liga/desliga a conexão pela internet e reinicia a rede na hora (sem reabrir o app).
+pub async fn set_internet(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let dir = net_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let config = NetConfig { internet: enabled };
-    std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+    std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let result = restart_node(app).await;
+    if let Ok(node) = app.state::<NetState>().node() {
+        log_command(&node, if enabled { "internet_ligada" } else { "internet_desligada" }, None, &result);
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn net_set_internet(app: AppHandle, enabled: bool) -> Result<(), String> {
+    set_internet(&app, enabled).await
 }
 
 #[tauri::command]
@@ -281,23 +416,64 @@ pub fn net_current_code(state: State<NetState>) -> Result<CurrentCode, String> {
     Ok(CurrentCode { code, expires_in })
 }
 
-/// Reconecta a um computador do histórico só clicando nele.
+/// Reconecta a um computador do histórico só clicando nele (prazo de 12 s; erro em português com dica).
 #[tauri::command]
 pub async fn net_reconnect(state: State<'_, NetState>, device_id: String) -> Result<(), String> {
-    let node = state.node()?.clone();
-    tokio::time::timeout(Duration::from_secs(20), node.reconnect(&device_id)).await.map_err(|_| "O outro computador não respondeu (está ligado e com o app aberto?).".to_string())?.map(|_| ())
+    let node = state.node()?;
+    let result = node.reconnect(&device_id).await.map(|_| ());
+    log_command(&node, "reconectar", Some(&device_id), &result);
+    result
+}
+
+/// Reconecta todos os pareados; devolve os ids que responderam.
+#[tauri::command]
+pub async fn net_reconnect_all(state: State<'_, NetState>) -> Result<Vec<String>, String> {
+    let node = state.node()?;
+    let answered = node.reconnect_all().await;
+    log_command::<()>(&node, "reconectar_todos", None, &Ok(()));
+    Ok(answered)
 }
 
 #[tauri::command]
 pub async fn net_pair(state: State<'_, NetState>, device_id: String, code: String) -> Result<(), String> {
-    let node = state.node()?.clone();
+    let node = state.node()?;
     let addr = node.addr_of(&device_id)?;
-    tokio::time::timeout(Duration::from_secs(20), node.pair_with(addr, code.trim())).await.map_err(|_| "O outro computador não respondeu.".to_string())?
+    let internet = node.internet();
+    let result = tokio::time::timeout(Duration::from_secs(20), node.pair_with(addr, code.trim())).await.map_err(|_| node::dica_conexao(node::SEM_RESPOSTA, internet, None)).and_then(|result| result);
+    log_command(&node, "parear", Some(&device_id), &result);
+    result
+}
+
+/// "+ › Copiar relatório para IA": estado + últimas 80 linhas do log, em Markdown.
+#[tauri::command]
+pub fn net_report(state: State<NetState>) -> Result<String, String> {
+    let node = state.node()?;
+    let snapshot = serde_json::to_string_pretty(&state_snapshot(&node)).map_err(|error| error.to_string())?;
+    let lines = netlog::read_tail(&node.dir(), 80, false).iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n");
+    Ok(format!("# Relatório da rede do Open Assistant (Windows)\n\n## Estado (`estado.json`)\n\n```json\n{snapshot}\n```\n\n## Últimas 80 linhas de `log.jsonl`\n\n```jsonl\n{lines}\n```\n"))
+}
+
+/// Configurações › Conectores MCP: comando para registrar o MCP da rede deste app no Claude Code.
+#[tauri::command]
+pub fn net_mcp_command() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    Ok(format!("claude mcp add open-assistant-rede -- \"{}\" --mcp-rede", exe.display()))
+}
+
+/// "+ › Abrir logs da rede": pasta `rede` no Explorador.
+#[tauri::command]
+pub fn net_open_logs(app: AppHandle) -> Result<(), String> {
+    let dir = net_dir(&app)?;
+    std::process::Command::new("explorer").arg(&dir).spawn().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
 pub fn net_forget(state: State<NetState>, device_id: String) -> Result<(), String> {
-    state.node()?.forget(&device_id)
+    let node = state.node()?;
+    let result = node.forget(&device_id);
+    log_command(&node, "esquecer", Some(&device_id), &result);
+    result
 }
 
 #[tauri::command]
@@ -370,9 +546,15 @@ pub fn net_agent_reply(state: State<NetState>, id: String, ok: bool, text: Strin
 /// Manda uma tarefa para o agente de outro computador (ele controla aquele PC) e devolve a resposta dele.
 #[tauri::command]
 pub async fn remote_agent(state: State<'_, NetState>, device_id: String, task: String, request_id: String) -> Result<String, String> {
-    let node = state.node()?.clone();
-    let addr = node.addr_of(&device_id)?;
-    node.remote_agent(addr, &request_id, &task).await
+    let node = state.node()?;
+    send_agent_task(&node, &device_id, &request_id, &task).await
+}
+
+pub async fn send_agent_task(node: &Node, device_id: &str, request_id: &str, task: &str) -> Result<String, String> {
+    let addr = node.addr_of(device_id)?;
+    let result = node.remote_agent(addr, request_id, task).await;
+    log_command(node, "tarefa_enviada", Some(device_id), &result);
+    result
 }
 
 /// Texto entre aspas simples para o PowerShell.
@@ -436,16 +618,19 @@ pub fn net_installer_info(app: AppHandle) -> Option<update::InstallerFile> {
 /// Manda o instalador para outro computador pareado; lá aparece o cartão "Instalar agora / Depois".
 #[tauri::command]
 pub async fn net_send_update(app: AppHandle, state: State<'_, NetState>, device_id: String) -> Result<String, String> {
-    let node = state.node()?.clone();
+    let node = state.node()?;
     let file = update::find_installer(&installer_dirs(&app)).ok_or("Nenhum instalador encontrado. Gere com `npm run build:installer` e coloque o arquivo \"Open Assistant_…-setup.exe\" na pasta Instalador, ao lado do app.")?;
     let path = file.path.clone();
     let sha256 = tauri::async_runtime::spawn_blocking(move || update::sha256_file(&path)).await.map_err(|error| error.to_string())??;
     let addr = node.addr_of(&device_id)?;
+    let log_id = device_id.clone();
     let progress_app = app.clone();
     let mut on_progress = move |sent: u64, total: u64| {
         let _ = progress_app.emit(UPDATE_PROGRESS_EVENT, UpdateProgressEvent { device_id: device_id.clone(), sent, total });
     };
-    tokio::time::timeout(Duration::from_secs(900), node.send_update(addr, &file, &sha256, &mut on_progress)).await.map_err(|_| "O envio passou de 15 minutos.".to_string())?
+    let result = tokio::time::timeout(Duration::from_secs(900), node.send_update(addr, &file, &sha256, &mut on_progress)).await.map_err(|_| "O envio passou de 15 minutos.".to_string()).and_then(|result| result);
+    log_command(&node, "enviar_atualizacao", Some(&log_id), &result);
+    result
 }
 
 /// A tela deste PC respondeu a uma oferta de atualização.

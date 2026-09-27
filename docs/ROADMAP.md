@@ -227,6 +227,17 @@ Design e testes de viabilidade: `docs/superpowers/specs/2026-09-27-novas-ferrame
 - [x] **Scan**: só depois de clicar aparecem os achados na rede (com o app → Conectar; sem o app → Enviar instalador, que abre a pasta do instalador)
 - [ ] Mac ainda não executa tarefas do agente vindas do PC (lado do app do Mac)
 
+## 19. Reconexão Mac ↔ Windows, logs e MCP da rede (docs/prompts/windows-rede-reconexao.md)
+- [x] Porta UDP fixa em `rede\porta.json` (fallback se ocupada, com espera ao reiniciar); regra do firewall tentada na abertura (sem administrador fica no log e vale a regra do programa)
+- [x] Internet liga/desliga na hora (o nó reinicia; sem "reabra"); aviso para ligar Internet quando um pareado nunca apareceu na rede local
+- [x] Laço de reconexão independente do mDNS (na hora e a cada 10 s); `net_reconnect` (12 s) e `net_reconnect_all`; duplo clique reconecta; Scan também reconecta
+- [x] Erros do iroh em português com dica (`dica_conexao`), com o original entre parênteses
+- [x] `rede\log.jsonl` (gira em 2 MB) com os eventos do Mac; `rede\estado.json` a cada 5 s; "+ › Copiar relatório para IA" e "Abrir logs da rede"
+- [x] Canal local `\.\pipe\open-assistant-rede-<usuário>` (ACL só do usuário) e MCP `Open Assistant.exe --mcp-rede` com as 7 ferramentas do Mac; comando para registrar em Configurações › Conectores MCP
+- [x] Verificado: 125 testes Rust (porta, sem endereço, log de estado, MCP fechado) + E2E com dois apps (Internet sem reabrir em 4 s, porta mantida, MCP rede_tarefa respondeu)
+- [ ] Testes com o Mac real (itens 1–5 do fim do prompt)
+
+
 Obscura (medido em 2026-09-27): bom em sites de documentação/simples (react.dev, Hacker News, Wikipedia: 2–3× mais texto que o download simples, com links, ~1,5 s); fraco em sites comerciais pesados/anti-robô (g1 travava 35 s; Amazon e Mercado Livre devolvem página de bloqueio; resultados do YouTube não aparecem; a build "stealth" não resolveu). Corrigido: `read_url` roda os dois em paralelo, Obscura com limite de 10 s, e fica com o texto mais útil.
 
 ## Próximos passos sugeridos (sessão 7)

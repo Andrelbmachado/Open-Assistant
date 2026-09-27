@@ -1394,6 +1394,11 @@ async fn remote_chat(
     if let Ok(mut chats) = app.state::<AppState>().ollama_chats.lock() {
         chats.remove(&request_id);
     }
+    if let Err(error) = &outcome {
+        if !cancel.load(Ordering::SeqCst) {
+            node.log().warn("chat_remoto_falhou", serde_json::json!({ "deviceId": device_id, "modelo": model, "erro": error }));
+        }
+    }
     match outcome {
         Ok(value) => serde_json::from_value(value).map_err(|error| format!("Resposta inválida do outro computador: {error}")),
         Err(_) if cancel.load(Ordering::SeqCst) => Ok(OllamaChatResult {
@@ -1653,6 +1658,11 @@ fn app_ready(app: AppHandle) -> Result<(), String> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// `Open Assistant.exe --mcp-rede`: MCP da rede no stdin/stdout, sem abrir a janela (network/mcp.rs).
+pub fn run_mcp_rede() -> i32 {
+    network::mcp::run()
+}
+
 pub fn run() {
     let builder = tauri::Builder::default();
     // Uma janela só: abrir o app de novo traz a janela que já existe (duas cópias dobram a memória).
@@ -1724,6 +1734,10 @@ pub fn run() {
             network::net_update_reply,
             network::net_current_code,
             network::net_reconnect,
+            network::net_reconnect_all,
+            network::net_report,
+            network::net_open_logs,
+            network::net_mcp_command,
             network::net_set_internet,
             obscura::browser_open,
             agent::skill_create,

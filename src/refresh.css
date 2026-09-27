@@ -1048,3 +1048,6 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .remote-toast.error { color: var(--danger, #ff453a); }
 .remote-toast .network-update-status { flex: 1; min-width: 140px; }
 @container (max-width: 700px) { .remote-device-card { top: auto; bottom: 14px; } .remote-code-bar { top: 10px; } }
+.remote-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; width: min(560px, calc(100% - 28px)); display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: calc(12px * var(--fs-body, 1)); box-shadow: 0 8px 28px rgba(0, 0, 0, .35); }
+.remote-hint span { flex: 1; min-width: 0; }
+.remote-hint .page-button { flex: none; }

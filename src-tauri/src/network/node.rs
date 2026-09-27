@@ -16,6 +16,7 @@ use tokio::io::BufReader;
 
 use super::identity::{DeviceInfo, DeviceKind};
 use super::pairing::{PairCheck, PairCode, Permissions, TrustStore, TrustedDevice};
+use super::netlog::NetLog;
 use super::protocol::{read_message, write_message, Message, ALPN};
 use super::update::{self, InstallerFile, UpdateDecision};
 
@@ -87,11 +88,66 @@ pub struct NodeConfig {
     pub update_asker: UpdateAsker,
     pub update_installer: UpdateInstaller,
     pub on_change: Arc<dyn Fn() + Send + Sync>,
+    /// Hello para os pareados ao abrir e a cada 10 s (independe do mDNS). Desligado nos testes, que chamam na mão.
+    pub reconnect_loop: bool,
 }
+
+/// `rede\porta.json`: a porta UDP deste computador (só o número). Fixa entre aberturas para o endereço salvo pelos
+/// outros continuar valendo.
+pub const PORT_FILE: &str = "porta.json";
+
+pub fn load_port(dir: &std::path::Path) -> Option<u16> {
+    std::fs::read_to_string(dir.join(PORT_FILE)).ok()?.trim().parse().ok().filter(|port| *port > 0)
+}
+
+fn save_port(dir: &std::path::Path, port: u16) {
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(dir.join(PORT_FILE), port.to_string());
+}
+
+/// Abre o endpoint na porta pedida (IPv4 obrigatória, IPv6 se der) ou numa porta livre (`None`).
+async fn bind_endpoint(key: &SecretKey, internet: bool, port: Option<u16>) -> Result<Endpoint, String> {
+    let builder = if internet { Endpoint::builder(presets::N0) } else { Endpoint::builder(presets::Minimal) };
+    let builder = builder.secret_key(key.clone()).alpns(vec![ALPN.to_vec()]);
+    let builder = match port {
+        Some(port) => builder
+            .clear_ip_transports()
+            .bind_addr(std::net::SocketAddr::from(([0, 0, 0, 0], port)))
+            .map_err(io)?
+            .bind_addr_with_opts(std::net::SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port)), iroh::endpoint::BindOpts::default().set_is_required(false))
+            .map_err(io)?,
+        None => builder,
+    };
+    builder.bind().await.map_err(io)
+}
+
+/// Erro de conexão do iroh → português com dica (mesma ideia do `dica_conexao` do app do Mac), com o original entre parênteses.
+pub fn dica_conexao(erro: &str, internet: bool, nome: Option<&str>) -> String {
+    let quem = nome.unwrap_or("o outro computador");
+    if erro.contains("No addressing information") {
+        let passo = if internet { "Confira se \"Internet\" está ligada também nele (ou coloque os dois na mesma rede)" } else { "Ligue \"Internet\" nos dois computadores (ou coloque os dois na mesma rede)" };
+        return format!("Este PC não sabe onde {quem} está. {passo} e tente Reconectar. ({erro})");
+    }
+    if erro == SEM_RESPOSTA || erro.to_lowercase().contains("timed out") || erro.contains("timeout") {
+        return "O outro computador não respondeu: o Open Assistant está aberto nele? O firewall libera o app?".into();
+    }
+    let dica = if internet { "" } else { " Se ele estiver em outra rede, ligue \"Internet\" nos dois." };
+    format!("Não foi possível conectar a {quem}.{dica} ({erro})")
+}
+
+/// Marcador de prazo estourado (vira a mensagem de "não respondeu").
+pub const SEM_RESPOSTA: &str = "timeout";
 
 struct Inner {
     key: SecretKey,
     dir: PathBuf,
+    log: NetLog,
+    port: u16,
+    fixed_port: bool,
+    /// Desligado no `shutdown`: os laços em segundo plano deste nó param.
+    alive: AtomicBool,
+    /// Último estado conhecido de cada pareado (para logar só quando muda).
+    reachable: Mutex<HashMap<String, bool>>,
     endpoint: Endpoint,
     router: Mutex<Option<Router>>,
     info: Mutex<DeviceInfo>,
@@ -128,6 +184,16 @@ pub struct NetDeviceView {
     pub permissions: Option<Permissions>,
     /// Última vez que respondeu (histórico dos computadores já conectados).
     pub last_seen: Option<u64>,
+    /// Endereços salvos no histórico (`ip:porta` ou `relay:<url>`).
+    pub addrs: Vec<String>,
+}
+
+fn addr_label(addr: &iroh::TransportAddr) -> String {
+    match addr {
+        iroh::TransportAddr::Ip(ip) => ip.to_string(),
+        iroh::TransportAddr::Relay(url) => format!("relay:{url}"),
+        other => format!("{other:?}"),
+    }
 }
 
 #[derive(Clone)]
@@ -151,18 +217,46 @@ fn io<E: std::fmt::Display>(error: E) -> String {
 
 impl Node {
     pub async fn start(config: NodeConfig) -> Result<Node, String> {
-        // `Minimal`: nada é publicado na internet; na fase 1 só a rede local (mDNS) e endereços diretos.
-        let endpoint = if config.internet {
-            Endpoint::builder(presets::N0).secret_key(config.key.clone()).alpns(vec![ALPN.to_vec()]).bind().await.map_err(io)?
-        } else {
-            Endpoint::builder(presets::Minimal).secret_key(config.key.clone()).alpns(vec![ALPN.to_vec()]).bind().await.map_err(io)?
+        // `Minimal`: nada é publicado na internet; só a rede local (mDNS) e endereços diretos.
+        // Porta fixa (`rede\porta.json`): se estiver ocupada, abre em outra e grava a nova.
+        let log = NetLog::new(&config.dir);
+        let saved = load_port(&config.dir);
+        let (endpoint, fixed_port) = match saved {
+            Some(port) => {
+                // Ao reiniciar o nó (ex.: ligar Internet), a porta antiga leva um instante para ser liberada.
+                let mut bound = bind_endpoint(&config.key, config.internet, Some(port)).await;
+                for _ in 0..16 {
+                    if bound.is_ok() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    bound = bind_endpoint(&config.key, config.internet, Some(port)).await;
+                }
+                match bound {
+                    Ok(endpoint) => (endpoint, true),
+                    Err(error) => {
+                        log.warn("porta_ocupada", serde_json::json!({ "porta": port, "erro": error }));
+                        (bind_endpoint(&config.key, config.internet, None).await?, false)
+                    }
+                }
+            }
+            None => (bind_endpoint(&config.key, config.internet, None).await?, false),
         };
+        let port = endpoint.bound_sockets().iter().find(|addr| addr.is_ipv4()).or(endpoint.bound_sockets().first()).map(|addr| addr.port()).unwrap_or(0);
+        if port != 0 && saved != Some(port) {
+            save_port(&config.dir, port);
+        }
         let mut info = config.info;
         info.id = endpoint.id().to_string();
         let node = Node {
             inner: Arc::new(Inner {
                 key: config.key.clone(),
                 dir: config.dir.clone(),
+                log,
+                port,
+                fixed_port,
+                alive: AtomicBool::new(true),
+                reachable: Mutex::new(HashMap::new()),
                 endpoint: endpoint.clone(),
                 router: Mutex::new(None),
                 info: Mutex::new(info),
@@ -181,10 +275,101 @@ impl Node {
         };
         let router = Router::builder(endpoint.clone()).accept(ALPN, Handler { node: node.clone() }).spawn();
         *node.inner.router.lock().unwrap() = Some(router);
-        if config.mdns {
-            node.start_mdns()?;
+        let mdns = config.mdns && match node.start_mdns() {
+            Ok(()) => true,
+            Err(error) => {
+                node.inner.log.warn("mdns_falhou", serde_json::json!({ "erro": error }));
+                false
+            }
+        };
+        let paired = node.inner.trust.lock().unwrap().devices.len();
+        node.inner.log.info("rede_iniciada", serde_json::json!({ "id": node.id(), "porta": port, "portaFixa": fixed_port, "internet": config.internet, "mdns": mdns, "pareados": paired }));
+        if config.reconnect_loop {
+            node.start_reconnect_loop();
         }
         Ok(node)
+    }
+
+    /// Ao abrir (na hora) e a cada 10 s: Hello para quem já conhecemos (online/offline, modelos e endereços).
+    /// Roda com ou sem mDNS.
+    fn start_reconnect_loop(&self) {
+        // Referência fraca: o laço não segura o nó (e a porta) depois do `shutdown`.
+        let weak = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            loop {
+                let Some(inner) = weak.upgrade() else { break };
+                let node = Node { inner };
+                if !node.inner.alive.load(Ordering::SeqCst) {
+                    break;
+                }
+                node.reconnect_sweep().await;
+                (node.inner.on_change)();
+                drop(node);
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        });
+    }
+
+    /// Uma rodada de Hello (prazo de 8 s cada). Para os pareados, anota no log quando o estado muda.
+    pub async fn reconnect_sweep(&self) {
+        let paired: HashSet<String> = self.inner.trust.lock().unwrap().devices.iter().map(|device| device.info.id.clone()).collect();
+        let mut jobs = tokio::task::JoinSet::new();
+        for addr in self.known_addrs() {
+            let node = self.clone();
+            let is_paired = paired.contains(&addr.id.to_string());
+            jobs.spawn(async move {
+                let id = addr.id.to_string();
+                let tried = addr.addrs.iter().map(addr_label).collect::<Vec<_>>();
+                let outcome = match tokio::time::timeout(Duration::from_secs(8), node.hello(addr)).await {
+                    Ok(result) => result.map(|_| ()),
+                    Err(_) => Err(SEM_RESPOSTA.to_string()),
+                };
+                if is_paired {
+                    node.note_reachability(&id, outcome.as_ref().err().map(String::as_str), &tried, false);
+                }
+            });
+        }
+        while jobs.join_next().await.is_some() {}
+    }
+
+    /// Log de mudança de estado de um pareado: `pareado_online` ao voltar; `pareado_sem_resposta` quando cai
+    /// (ou sempre, se foi o botão Reconectar).
+    fn note_reachability(&self, id: &str, error: Option<&str>, tried: &[String], manual: bool) {
+        let name = self.inner.trust.lock().unwrap().get(id).map(|device| device.info.name.clone()).unwrap_or_default();
+        let previous = self.inner.reachable.lock().unwrap().insert(id.to_string(), error.is_none());
+        match error {
+            None if previous != Some(true) => self.inner.log.info("pareado_online", serde_json::json!({ "id": id, "nome": name })),
+            Some(error) if previous != Some(false) || manual => {
+                let dica = dica_conexao(error, self.inner.internet, Some(&name));
+                self.inner.log.warn("pareado_sem_resposta", serde_json::json!({ "id": id, "nome": name, "erro": error, "enderecosTentados": tried, "internet": self.inner.internet, "dica": dica }));
+            }
+            _ => {}
+        }
+    }
+
+    pub fn log(&self) -> &NetLog {
+        &self.inner.log
+    }
+
+    pub fn dir(&self) -> PathBuf {
+        self.inner.dir.clone()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.inner.port
+    }
+
+    /// Estado para diagnóstico (`estado.json`, MCP `rede_diagnostico`).
+    pub fn diagnostics(&self) -> serde_json::Value {
+        serde_json::json!({
+            "este": self.info(),
+            "porta": self.inner.port,
+            "portaFixa": self.inner.fixed_port,
+            "internet": self.inner.internet,
+            "visivel": self.visible(),
+            "dispositivos": self.devices().into_iter().filter(|device| !device.is_self).collect::<Vec<_>>(),
+            "problemasRecentes": self.inner.log.recent_problems(),
+        })
     }
 
     fn start_mdns(&self) -> Result<(), String> {
@@ -192,32 +377,22 @@ impl Node {
         use n0_future::StreamExt;
         let mdns = MdnsAddressLookup::builder().service_name("open-assistant").build(self.inner.endpoint.id()).map_err(io)?;
         self.inner.endpoint.address_lookup().map_err(io)?.add(mdns.clone());
-        let node = self.clone();
+        let weak = Arc::downgrade(&self.inner);
         tokio::spawn(async move {
             let mut events = mdns.subscribe().await;
             while let Some(event) = events.next().await {
+                let Some(inner) = weak.upgrade() else { break };
+                let node = Node { inner };
+                if !node.inner.alive.load(Ordering::SeqCst) {
+                    break;
+                }
                 if let DiscoveryEvent::Discovered { endpoint_info, .. } = event {
                     let addr = endpoint_info.to_endpoint_addr();
                     node.inner.lan.lock().unwrap().insert(addr.id.to_string());
-                    let node = node.clone();
                     tokio::spawn(async move {
                         let _ = node.hello(addr).await;
                     });
                 }
-            }
-        });
-        // A cada 10 s: Hello para quem já conhecemos (atualiza online/offline e a lista de modelos).
-        let node = self.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                for addr in node.known_addrs() {
-                    let node = node.clone();
-                    tokio::spawn(async move {
-                        let _ = tokio::time::timeout(Duration::from_secs(8), node.hello(addr)).await;
-                    });
-                }
-                (node.inner.on_change)();
             }
         });
         Ok(())
@@ -240,7 +415,16 @@ impl Node {
         let info = DeviceInfo { id: String::new(), name: name.into(), kind: DeviceKind::Desktop, os: "Windows".into(), mac: None, gpu: None, models: vec!["qwen3.5:9b".into()] };
         let agent: AgentExecutor = Arc::new(|task: AgentTaskData| Box::pin(async move { if task.needs_confirm { Err("Recusado neste computador.".to_string()) } else { Ok(format!("feito: {}", task.task)) } }));
         let update_asker: UpdateAsker = Arc::new(move |_offer| Box::pin(async move { decision }));
-        Node::start(NodeConfig { dir, key: SecretKey::generate(), info, mdns: false, internet: false, executor: Arc::new(executor), agent, update_asker, update_installer, on_change: Arc::new(|| {}) }).await
+        Node::start(NodeConfig { dir, key: SecretKey::generate(), info, mdns: false, internet: false, executor: Arc::new(executor), agent, update_asker, update_installer, on_change: Arc::new(|| {}), reconnect_loop: false }).await
+    }
+
+    /// Nó de teste numa pasta e chave escolhidas (simula fechar e abrir o mesmo app).
+    #[cfg(test)]
+    pub async fn start_for_test_at(name: &str, dir: PathBuf, key: SecretKey, internet: bool) -> Result<Node, String> {
+        let info = DeviceInfo { id: String::new(), name: name.into(), kind: DeviceKind::Desktop, os: "Windows".into(), mac: None, gpu: None, models: vec![] };
+        let agent: AgentExecutor = Arc::new(|task: AgentTaskData| Box::pin(async move { Ok(format!("feito: {}", task.task)) }));
+        let update_asker: UpdateAsker = Arc::new(|_offer| Box::pin(async move { UpdateDecision::Later }));
+        Node::start(NodeConfig { dir, key, info, mdns: false, internet, executor: Arc::new(|_, _| Err("sem chat".to_string())), agent, update_asker, update_installer: Arc::new(|_| Ok(())), on_change: Arc::new(|| {}), reconnect_loop: false }).await
     }
 
     pub fn id(&self) -> String {
@@ -282,10 +466,33 @@ impl Node {
         (code.code().to_string(), code.expires_in(now).as_secs())
     }
 
-    /// Reconecta a um computador do histórico (usa os últimos endereços salvos).
+    /// Reconecta a um computador do histórico (usa os últimos endereços salvos). Prazo de 12 s; erro em português.
     pub async fn reconnect(&self, id: &str) -> Result<DeviceInfo, String> {
         let addr = self.addr_of(id)?;
-        self.hello(addr).await
+        let tried = addr.addrs.iter().map(addr_label).collect::<Vec<_>>();
+        let outcome = match tokio::time::timeout(Duration::from_secs(12), self.hello(addr)).await {
+            Ok(result) => result,
+            Err(_) => Err(SEM_RESPOSTA.to_string()),
+        };
+        self.note_reachability(id, outcome.as_ref().err().map(String::as_str), &tried, true);
+        outcome.map_err(|error| if error == SEM_RESPOSTA { dica_conexao(&error, self.inner.internet, None) } else { error })
+    }
+
+    /// Reconecta todos os pareados ao mesmo tempo; devolve os ids que responderam.
+    pub async fn reconnect_all(&self) -> Vec<String> {
+        let ids: Vec<String> = self.inner.trust.lock().unwrap().devices.iter().map(|device| device.info.id.clone()).collect();
+        let mut jobs = tokio::task::JoinSet::new();
+        for id in ids {
+            let node = self.clone();
+            jobs.spawn(async move { node.reconnect(&id).await.ok().map(|_| id) });
+        }
+        let mut answered = Vec::new();
+        while let Some(result) = jobs.join_next().await {
+            if let Ok(Some(id)) = result {
+                answered.push(id);
+            }
+        }
+        answered
     }
 
     /// Guarda no histórico por onde a conexão passou (IP da rede local e/ou servidor de retransmissão).
@@ -391,7 +598,11 @@ impl Node {
     }
 
     async fn open(&self, addr: EndpointAddr) -> Result<(Connection, iroh::endpoint::SendStream, BufReader<iroh::endpoint::RecvStream>), String> {
-        let connection = self.inner.endpoint.connect(addr, ALPN).await.map_err(|error| format!("Não foi possível conectar: {error}"))?;
+        let id = addr.id.to_string();
+        let connection = self.inner.endpoint.connect(addr, ALPN).await.map_err(|error| {
+            let name = self.inner.trust.lock().unwrap().get(&id).map(|device| device.info.name.clone()).or_else(|| self.inner.seen.lock().unwrap().get(&id).map(|seen| seen.info.name.clone()));
+            dica_conexao(&error.to_string(), self.inner.internet, name.as_deref())
+        })?;
         let (send, recv) = connection.open_bi().await.map_err(io)?;
         Ok((connection, send, BufReader::new(recv)))
     }
@@ -593,6 +804,7 @@ impl Node {
             link: None,
             permissions: None,
             last_seen: None,
+            addrs: Vec::new(),
         }];
         let seen = self.inner.seen.lock().unwrap().clone();
         let lan = self.inner.lan.lock().unwrap().clone();
@@ -615,6 +827,7 @@ impl Node {
                 link: link(&device.info.id),
                 permissions: Some(device.permissions.clone()),
                 last_seen: Some(if recent.is_some_and(|s| s.last.elapsed() < ONLINE_WINDOW) { now_secs() } else { device.last_seen }).filter(|at| *at > 0),
+                addrs: device.addrs.iter().map(addr_label).collect(),
             });
         }
         for (id, s) in &seen {
@@ -635,16 +848,19 @@ impl Node {
                 link: link(id),
                 permissions: None,
                 last_seen: None,
+                addrs: Vec::new(),
             });
         }
         list
     }
 
     pub async fn shutdown(&self) {
+        self.inner.alive.store(false, Ordering::SeqCst);
         let router = self.inner.router.lock().unwrap().take();
         if let Some(router) = router {
             let _ = router.shutdown().await;
         }
+        self.inner.endpoint.close().await;
     }
 
     /// Atende uma conexão que chegou (lado de quem recebe).
@@ -719,12 +935,21 @@ impl Node {
                 let reply = match device {
                     None => Message::Error { message: "Este computador não está conectado a este aqui.".into() },
                     Some(device) => {
-                        let data = AgentTaskData { request_id, task, from_id: remote.clone(), from_name: device.info.name.clone(), needs_confirm: !device.permissions.controlar };
-                        match tokio::time::timeout(Duration::from_secs(600), (self.inner.agent)(data)).await {
+                        let needs_confirm = !device.permissions.controlar;
+                        self.inner.log.info("tarefa_recebida", serde_json::json!({ "de": device.info.name, "deId": remote, "taskId": request_id, "precisaConfirmar": needs_confirm, "tarefa": task.chars().take(300).collect::<String>() }));
+                        let task_id = request_id.clone();
+                        let data = AgentTaskData { request_id, task, from_id: remote.clone(), from_name: device.info.name.clone(), needs_confirm };
+                        let reply = match tokio::time::timeout(Duration::from_secs(600), (self.inner.agent)(data)).await {
                             Ok(Ok(text)) => Message::AgentResult { ok: true, text },
                             Ok(Err(text)) => Message::AgentResult { ok: false, text },
                             Err(_) => Message::AgentResult { ok: false, text: "A tarefa passou de 10 minutos e foi encerrada.".into() },
+                        };
+                        if let Message::AgentResult { ok, text } = &reply {
+                            let summary: String = text.chars().take(300).collect();
+                            let fields = if *ok { serde_json::json!({ "taskId": task_id, "ok": true, "resposta": summary }) } else { serde_json::json!({ "taskId": task_id, "ok": false, "erro": summary }) };
+                            self.inner.log.info("tarefa_concluida", fields);
                         }
+                        reply
                     }
                 };
                 write_message(&mut send, &reply).await?;
@@ -790,7 +1015,11 @@ impl std::error::Error for ServeError {}
 
 impl ProtocolHandler for Handler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        self.node.serve(connection).await.map_err(|error| AcceptError::from_err(ServeError(error)))
+        let from = connection.remote_id().to_string();
+        self.node.serve(connection).await.map_err(|error| {
+            self.node.inner.log.warn("conexao_recebida_falhou", serde_json::json!({ "de": from, "erro": error }));
+            AcceptError::from_err(ServeError(error))
+        })
     }
 }
 
@@ -961,6 +1190,86 @@ mod tests {
         assert!(b.devices().iter().any(|device| device.id == a.id() && device.online && device.last_seen.is_some()));
         a.shutdown().await;
         b.shutdown().await;
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("oa-node-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn saved_port_is_reused_and_busy_port_falls_back() {
+        let dir = test_dir("porta");
+        let key = SecretKey::generate();
+        let first = Node::start_for_test_at("p1", dir.clone(), key.clone(), false).await.unwrap();
+        let port = first.port();
+        assert!(port > 0);
+        assert_eq!(load_port(&dir), Some(port));
+        first.shutdown().await;
+        drop(first);
+        // Reabrir: mesma porta.
+        let again = Node::start_for_test_at("p1", dir.clone(), key.clone(), false).await.unwrap();
+        assert_eq!(again.port(), port);
+        // Outro app segurando a porta: abre em outra e regrava porta.json.
+        let other_dir = test_dir("porta-outro");
+        save_port(&other_dir, port);
+        let busy = Node::start_for_test_at("p2", other_dir.clone(), SecretKey::generate(), false).await.unwrap();
+        assert_ne!(busy.port(), port);
+        assert_eq!(load_port(&other_dir), Some(busy.port()));
+        assert!(super::super::netlog::read_tail(&other_dir, 10, true).iter().any(|line| line["event"] == "porta_ocupada"));
+        again.shutdown().await;
+        busy.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn old_pair_without_addresses_gives_a_portuguese_hint() {
+        let dir = test_dir("sem-endereco");
+        let key = SecretKey::generate();
+        let lonely = SecretKey::generate().public().to_string();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("confiaveis.json"), format!(r#"[{{"info":{{"id":"{lonely}","name":"Andres-MacBook-Pro","kind":"macbook","os":"macOS","mac":null,"gpu":null,"models":[]}},"permissions":{{"usarIA":true,"controlar":true,"atualizar":true}},"pairedAt":1}}]"#)).unwrap();
+        let node = Node::start_for_test_at("pc", dir.clone(), key, false).await.unwrap();
+        let error = node.reconnect(&lonely).await.unwrap_err();
+        assert!(error.contains("Este PC não sabe onde Andres-MacBook-Pro está"), "{error}");
+        assert!(error.contains("Ligue \"Internet\" nos dois"), "{error}");
+        assert!(error.contains("(No addressing information"), "{error}");
+        node.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn log_marks_offline_once_and_online_on_return() {
+        let dir_a = test_dir("log-a");
+        let key_a = SecretKey::generate();
+        let a = Node::start_for_test_at("a8", dir_a.clone(), key_a.clone(), false).await.unwrap();
+        let b = Node::start_for_test_at("b8", test_dir("log-b"), SecretKey::generate(), false).await.unwrap();
+        let (code, _) = a.current_code();
+        b.pair_with(a.addr(), &code).await.unwrap();
+        a.shutdown().await;
+        drop(a);
+        b.inner.seen.lock().unwrap().clear();
+        let count = |event: &str| super::super::netlog::read_tail(&b.dir(), 200, false).iter().filter(|line| line["event"] == event).count();
+        b.reconnect_sweep().await;
+        b.reconnect_sweep().await;
+        assert_eq!(count("pareado_sem_resposta"), 1);
+        // A reabre (mesma chave, mesma porta): B acha pelos endereços salvos.
+        let a2 = Node::start_for_test_at("a8", dir_a, key_a, false).await.unwrap();
+        b.reconnect_sweep().await;
+        b.reconnect_sweep().await;
+        let lines = super::super::netlog::read_tail(&b.dir(), 200, false);
+        let online: Vec<_> = lines.iter().filter(|line| line["event"] == "pareado_online").collect();
+        assert_eq!(online.len(), 1, "{lines:?}");
+        assert_eq!(online.last().unwrap()["nome"], "a8");
+        assert_eq!(count("pareado_sem_resposta"), 1);
+        a2.shutdown().await;
+        b.shutdown().await;
+    }
+
+    #[test]
+    fn connection_hints() {
+        assert!(dica_conexao("No addressing information available", true, Some("Mac")).contains("Confira se \"Internet\" está ligada também nele"));
+        assert_eq!(dica_conexao(SEM_RESPOSTA, false, None), "O outro computador não respondeu: o Open Assistant está aberto nele? O firewall libera o app?");
+        assert!(dica_conexao("connection refused", false, Some("Mac")).starts_with("Não foi possível conectar a Mac. Se ele estiver em outra rede"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
