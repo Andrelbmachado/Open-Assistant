@@ -176,8 +176,8 @@ Os editores de notes/nós (Node Editor / Node Workflow) passam a ser usados pelo
 - [ ] Mostrar a navegação do agente no Node Editor (seção 11)
 
 ## 13. Voz padrão: AuK da Tencent Hunyuan (pedido 2026-09-26)
-- [ ] Adotar o AuK (https://github.com/Tencent-Hunyuan/AuK.git) como sistema de voz padrão do app
-- [ ] Avaliar o repositório (licença, requisitos de GPU/VRAM na RTX 5070, suporte a português, rodar local no Windows)
+- [ ] Adotar o AuK (https://github.com/Tencent-Hunyuan/AuK.git) como sistema de voz padrão do app (suspenso até existir versão com português ou build com Soxr para clonar a voz Piper)
+- [x] Avaliar o repositório: MIT, roda local pelo audio.cpp CUDA (6,5 GB). **REPROVADO em 2026-09-27**: não fala português (lê a descrição da voz em voz alta e embola as palavras; clonagem não roda na build Windows). Piper continua a voz padrão. Detalhes: `docs/superpowers/specs/2026-09-26-auk-teste.md`
 - [ ] Integrar via Rust (como o sherpa-onnx em `src-tauri/src/speech.rs`), baixando a runtime/modelo para `%LOCALAPPDATA%\com.openassistant.windows\tools`
 - [ ] Manter o sherpa-onnx como alternativa/fallback e opção em Configurações
 - [ ] Testar de ponta a ponta com o microfone falso (E2E já existente) e com o agente
