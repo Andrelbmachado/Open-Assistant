@@ -51,6 +51,8 @@ entrega itens para o próximo. Nodes "por item" rodam uma vez para cada item (ex
 | `system.powershell` | roda um comando (política de segurança vale) | `command` |
 | `agent.task` | entrega uma tarefa ao agente do PC | `instruction` |
 
+Não use `trace.start` nem `trace.step`: são nodes só de visualização dos fluxos do próprio sistema.
+
 ## Exemplos reais (copie a estrutura)
 
 ### 1. Abrir um site

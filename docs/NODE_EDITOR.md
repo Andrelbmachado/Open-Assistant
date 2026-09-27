@@ -80,6 +80,10 @@ WorkflowService.tsx (sem interface): configura o serviço e roda o agendador a c
 | `output.notify` | Saída | Notificação do Windows | `title`, `message` | os mesmos itens |
 | `system.powershell` | Sistema | Roda um comando (política do agente) | `command` | item + `text` |
 | `agent.task` | Sistema | Tarefa para o agente que controla o PC | `instruction` | item + `text` |
+| `trace.start` | Sistema (só visualização) | Início de um fluxo do próprio app (ex.: mensagem do chat) | `about`, `code` | — |
+| `trace.step` | Sistema (só visualização) | Etapa que o próprio app executa; acende ao vivo | `about`, `code` | — |
+
+Os nodes `trace.*` aparecem só nos fluxos do sistema (tela Agentes → Agentes do sistema), não estão na paleta e não rodam no motor.
 
 ### Textos dinâmicos
 - `{{campo}}` do item (`{{text}}`, `{{name}}`, `{{path}}`, `{{json.preco}}`); campo inexistente vira vazio.

@@ -37,6 +37,8 @@ export interface NodeKindSpec {
   params: ParamSpec[];
   /** O que sai: campos dos itens produzidos (documentação). */
   produces: string;
+  /** Node do sistema: só mostra uma etapa que o código do app faz (não roda no motor, não aparece na paleta). */
+  traceOnly?: boolean;
 }
 
 export type ParamValue = string | number | boolean;
@@ -195,6 +197,15 @@ export const NODE_KINDS: NodeKindSpec[] = [
   { kind: "agent.task", label: "Agente do PC", category: "sistema", description: "Entrega uma tarefa ao agente que controla o computador (abrir apps, clicar, mover janelas…).", input: true, output: true, mode: "each", params: [
     { key: "instruction", label: "Tarefa", type: "longtext", default: "", template: true },
   ], produces: "o item + `text` (resposta do agente)" },
+  // Sistema (só visualização): etapas que o próprio app executa, acesas ao vivo pelo rastro (`store/systemTrace.ts`).
+  { kind: "trace.start", label: "Início do sistema", category: "sistema", description: "Onde um fluxo do próprio app começa (ex.: uma mensagem do chat).", input: false, output: true, mode: "once", traceOnly: true, params: [
+    { key: "about", label: "O que faz", type: "longtext", default: "" },
+    { key: "code", label: "Onde no código", type: "text", default: "" },
+  ], produces: "—" },
+  { kind: "trace.step", label: "Etapa do sistema", category: "sistema", description: "Uma etapa que o próprio app executa; acende quando acontece de verdade.", input: true, output: true, mode: "each", traceOnly: true, params: [
+    { key: "about", label: "O que faz", type: "longtext", default: "" },
+    { key: "code", label: "Onde no código", type: "text", default: "" },
+  ], produces: "—" },
 ];
 
 export const KIND_BY_ID = new Map(NODE_KINDS.map((spec) => [spec.kind, spec]));
@@ -280,7 +291,7 @@ export function validateWorkflow(doc: Pick<WorkflowDoc, "nodes" | "connections">
     if (KIND_BY_ID.get(from.kind)?.output === false) issues.push({ nodeId: from.id, message: `"${nodeTitle(from)}" não tem saída.` });
     if (KIND_BY_ID.get(to.kind)?.input === false) issues.push({ nodeId: to.id, message: `"${nodeTitle(to)}" é um gatilho e não tem entrada.` });
   }
-  if (!doc.nodes.some((node) => node.kind.startsWith("trigger."))) issues.push({ message: "Falta um gatilho (trigger.manual ou trigger.schedule) no começo." });
+  if (!doc.nodes.some((node) => node.kind.startsWith("trigger.") || node.kind === "trace.start")) issues.push({ message: "Falta um gatilho (trigger.manual ou trigger.schedule) no começo." });
   try { executionOrder(doc); } catch (error) { issues.push({ message: (error as Error).message }); }
   return issues;
 }

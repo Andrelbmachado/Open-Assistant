@@ -212,6 +212,9 @@ async function runNode(node: FlowNode, inputs: FlowItem[], context: NodeContext)
     case "output.notify": await host.notify(text("title", inputs[0] ?? {}), text("message", inputs[0] ?? {})); return inputs;
     case "system.powershell": return each(async (item, index) => ({ ...item, text: await host.runCommand(text("command", item, index)) }));
     case "agent.task": return each(async (item, index) => ({ ...item, text: await host.runAgent(text("instruction", item, index)) }));
+    case "trace.start":
+    case "trace.step":
+      throw new Error("Este node é do sistema: ele só mostra o que o app faz e não roda sozinho.");
     default: throw new Error(`o node ${node.kind} ainda não tem executor.`);
   }
 }
