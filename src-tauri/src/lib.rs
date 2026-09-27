@@ -945,7 +945,7 @@ fn ollama_stop_pull(
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-struct ChatMessageInput {
+pub(crate) struct ChatMessageInput {
     role: String,
     content: String,
     /// Imagens em base64 (sem o prefixo `data:`), no formato de `/api/chat` do Ollama.
@@ -962,9 +962,9 @@ struct ChatMessageInput {
 /// Evento de streaming do chat, usado pelo Ollama e pelo BitNet.
 const CHAT_DELTA_EVENT: &str = "ollama-chat-delta";
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OllamaChatResult {
+pub(crate) struct OllamaChatResult {
     model: String,
     content: String,
     thinking: String,
@@ -980,9 +980,9 @@ struct OllamaChatResult {
     tool_calls: Vec<serde_json::Value>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OllamaChatDelta {
+pub(crate) struct OllamaChatDelta {
     request_id: String,
     content: String,
     thinking: String,
@@ -1086,9 +1086,9 @@ fn model_capabilities(agent: &ureq::Agent, model: &str) -> Result<Vec<String>, S
 }
 
 /// Opções extras do agente: ferramentas e tamanho de contexto.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Serialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
-struct ChatOptions {
+pub(crate) struct ChatOptions {
     tools: Option<serde_json::Value>,
     num_ctx: Option<u32>,
 }
@@ -1103,6 +1103,24 @@ fn run_chat(
     think_level: Option<&str>,
     options: &ChatOptions,
     cancel: &AtomicBool,
+) -> Result<OllamaChatResult, String> {
+    run_chat_with(request_id, model, messages, think, think_level, options, cancel, &mut |delta| {
+        let _ = app.emit(CHAT_DELTA_EVENT, delta.clone());
+    })
+}
+
+/// O mesmo `run_chat`, mas entregando os pedaços da resposta a `on_delta` (a rede usa isso para mandar
+/// a resposta a outro computador; o chat local emite `ollama-chat-delta`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_chat_with(
+    request_id: &str,
+    model: &str,
+    messages: &[ChatMessageInput],
+    think: Option<bool>,
+    think_level: Option<&str>,
+    options: &ChatOptions,
+    cancel: &AtomicBool,
+    on_delta: &mut dyn FnMut(&OllamaChatDelta),
 ) -> Result<OllamaChatResult, String> {
     let cancelled_result = || OllamaChatResult {
         model: model.to_string(),
@@ -1177,9 +1195,9 @@ fn run_chat(
         thinking: String::new(),
         thinking_tokens: 0,
     };
-    let flush = |pending: &mut OllamaChatDelta| {
+    let mut flush = |pending: &mut OllamaChatDelta| {
         if !pending.content.is_empty() || !pending.thinking.is_empty() {
-            let _ = app.emit(CHAT_DELTA_EVENT, pending.clone());
+            on_delta(pending);
             pending.content.clear();
             pending.thinking.clear();
             pending.thinking_tokens = 0;
