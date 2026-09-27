@@ -170,9 +170,9 @@ Os editores de notes/nós (Node Editor / Node Workflow) passam a ser usados pelo
 - [ ] Formato único de workflow (JSON de nós + arestas) usado tanto pelos agentes do sistema quanto pelos do usuário; eventos de execução emitidos pelo Rust para a UI
 
 ## 12. Browser próprio: Obscura (pedido 2026-09-26)
-- [ ] Adotar o Obscura (https://github.com/h4ckf0r0day/obscura.git) como o browser do Open Assistant
-- [ ] Avaliar o repositório (licença, stack, build no Windows, API de automação) antes de integrar
-- [ ] Ligar o agente (`open_url`, pesquisa web, leitura de página) ao Obscura em vez do Chrome, mantendo o Chrome como alternativa
+- [x] Adotar o Obscura (https://github.com/h4ckf0r0day/obscura.git) como o browser do Open Assistant (receita `obscura`, v0.2.3)
+- [x] Avaliar o repositório: Apache-2.0, binário Windows v0.2.3 (obscura.exe + obscura-worker.exe), sem janela, CDP; vídeo pode não tocar
+- [x] Ligar o agente ao Obscura (fase 1: `read_url` e node Ler página em Markdown, plano B = download simples; `open_url` continua no Chrome). Fase 2: pesquisa e tela Browser ao vivo
 - [ ] Mostrar a navegação do agente no Node Editor (seção 11)
 
 ## 13. Voz padrão: AuK da Tencent Hunyuan (pedido 2026-09-26)
