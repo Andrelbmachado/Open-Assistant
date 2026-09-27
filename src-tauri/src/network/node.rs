@@ -17,6 +17,7 @@ use tokio::io::BufReader;
 use super::identity::{DeviceInfo, DeviceKind};
 use super::pairing::{PairCheck, PairCode, Permissions, TrustStore, TrustedDevice};
 use super::protocol::{read_message, write_message, Message, ALPN};
+use super::update::{self, InstallerFile, UpdateDecision};
 
 /// Pedido de chat que chegou de outro computador.
 pub struct ChatRequestData {
@@ -48,6 +49,20 @@ pub struct AgentTaskData {
 /// Quem executa as tarefas de agente (no app: a tela deste PC confirma e roda o agente local).
 pub type AgentExecutor = Arc<dyn Fn(AgentTaskData) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>> + Send + Sync>;
 
+/// Oferta de atualização que chegou de outro computador (a tela deste PC decide).
+pub struct UpdateOfferData {
+    pub from_id: String,
+    pub from_name: String,
+    pub version: String,
+    pub file_name: String,
+    pub size: u64,
+}
+
+/// Pergunta na tela deste PC se instala a atualização oferecida.
+pub type UpdateAsker = Arc<dyn Fn(UpdateOfferData) -> std::pin::Pin<Box<dyn std::future::Future<Output = UpdateDecision> + Send>> + Send + Sync>;
+/// Roda o instalador já conferido (no app: instalação silenciosa do NSIS e reabre o app).
+pub type UpdateInstaller = Arc<dyn Fn(PathBuf) -> Result<(), String> + Send + Sync>;
+
 /// Computador visto recentemente (respondeu um Hello ou nos mandou um).
 #[derive(Clone)]
 struct Seen {
@@ -69,10 +84,14 @@ pub struct NodeConfig {
     pub internet: bool,
     pub executor: ChatExecutor,
     pub agent: AgentExecutor,
+    pub update_asker: UpdateAsker,
+    pub update_installer: UpdateInstaller,
     pub on_change: Arc<dyn Fn() + Send + Sync>,
 }
 
 struct Inner {
+    key: SecretKey,
+    dir: PathBuf,
     endpoint: Endpoint,
     router: Mutex<Option<Router>>,
     info: Mutex<DeviceInfo>,
@@ -83,6 +102,8 @@ struct Inner {
     lan: Mutex<HashSet<String>>,
     executor: ChatExecutor,
     agent: AgentExecutor,
+    update_asker: UpdateAsker,
+    update_installer: UpdateInstaller,
     on_change: Arc<dyn Fn() + Send + Sync>,
     visible: AtomicBool,
     internet: bool,
@@ -138,6 +159,8 @@ impl Node {
         info.id = endpoint.id().to_string();
         let node = Node {
             inner: Arc::new(Inner {
+                key: config.key.clone(),
+                dir: config.dir.clone(),
                 endpoint: endpoint.clone(),
                 router: Mutex::new(None),
                 info: Mutex::new(info),
@@ -147,6 +170,8 @@ impl Node {
                 lan: Mutex::new(HashSet::new()),
                 executor: config.executor,
                 agent: config.agent,
+                update_asker: config.update_asker,
+                update_installer: config.update_installer,
                 on_change: config.on_change,
                 visible: AtomicBool::new(true),
                 internet: config.internet,
@@ -198,11 +223,22 @@ impl Node {
 
     #[cfg(test)]
     pub async fn start_for_test(name: &str, executor: impl Fn(ChatRequestData, &mut dyn FnMut(serde_json::Value)) -> Result<serde_json::Value, String> + Send + Sync + 'static) -> Result<Node, String> {
+        Node::start_for_test_with(name, executor, UpdateDecision::Later, Arc::new(|_| Ok(()))).await
+    }
+
+    #[cfg(test)]
+    pub async fn start_for_test_with(
+        name: &str,
+        executor: impl Fn(ChatRequestData, &mut dyn FnMut(serde_json::Value)) -> Result<serde_json::Value, String> + Send + Sync + 'static,
+        decision: UpdateDecision,
+        update_installer: UpdateInstaller,
+    ) -> Result<Node, String> {
         let dir = std::env::temp_dir().join(format!("oa-node-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let info = DeviceInfo { id: String::new(), name: name.into(), kind: DeviceKind::Desktop, os: "Windows".into(), mac: None, gpu: None, models: vec!["qwen3.5:9b".into()] };
         let agent: AgentExecutor = Arc::new(|task: AgentTaskData| Box::pin(async move { if task.needs_confirm { Err("Recusado neste computador.".to_string()) } else { Ok(format!("feito: {}", task.task)) } }));
-        Node::start(NodeConfig { dir, key: SecretKey::generate(), info, mdns: false, internet: false, executor: Arc::new(executor), agent, on_change: Arc::new(|| {}) }).await
+        let update_asker: UpdateAsker = Arc::new(move |_offer| Box::pin(async move { decision }));
+        Node::start(NodeConfig { dir, key: SecretKey::generate(), info, mdns: false, internet: false, executor: Arc::new(executor), agent, update_asker, update_installer, on_change: Arc::new(|| {}) }).await
     }
 
     pub fn id(&self) -> String {
@@ -419,6 +455,83 @@ impl Node {
         }
     }
 
+    /// Manda o instalador para outro computador (fase 3). Ele pergunta na tela de lá; se aceitarem, o arquivo vai em
+    /// pedaços e o outro lado confere assinatura + SHA-256 antes de instalar. `on_progress(enviado, total)`.
+    pub async fn send_update(&self, addr: EndpointAddr, file: &InstallerFile, sha256: &str, on_progress: &mut (dyn FnMut(u64, u64) + Send)) -> Result<String, String> {
+        use base64::Engine;
+        use tokio::io::AsyncReadExt;
+        let (_connection, mut send, mut recv) = self.open(addr).await?;
+        let signature = update::sign(&self.inner.key, &file.version, file.size, sha256);
+        write_message(&mut send, &Message::UpdateOffer { version: file.version.clone(), file_name: file.file_name.clone(), size: file.size, sha256: sha256.into(), signature }).await?;
+        match read_message(&mut recv).await? {
+            Some(Message::UpdateReply { accept: true, .. }) => {}
+            Some(Message::UpdateReply { reason, .. }) => return Err(reason.unwrap_or_else(|| "Recusado no outro computador.".into())),
+            Some(Message::Error { message }) => return Err(message),
+            None => return Err("O outro computador encerrou a conexão.".into()),
+            _ => return Err("Resposta inesperada.".into()),
+        }
+        let mut source = tokio::fs::File::open(&file.path).await.map_err(io)?;
+        let mut buffer = vec![0u8; update::CHUNK];
+        let mut sent = 0u64;
+        while sent < file.size {
+            let read = source.read(&mut buffer).await.map_err(io)?;
+            if read == 0 {
+                break;
+            }
+            let read = read.min((file.size - sent) as usize);
+            write_message(&mut send, &Message::UpdateChunk { data: base64::engine::general_purpose::STANDARD.encode(&buffer[..read]) }).await?;
+            sent += read as u64;
+            on_progress(sent, file.size);
+        }
+        let reply = read_message(&mut recv).await?;
+        let _ = send.finish();
+        match reply {
+            Some(Message::UpdateResult { ok: true, text }) => Ok(text),
+            Some(Message::UpdateResult { text, .. }) | Some(Message::Error { message: text }) => Err(text),
+            None => Err("O outro computador encerrou a conexão.".into()),
+            _ => Err("Resposta inesperada.".into()),
+        }
+    }
+
+    /// Recebe os pedaços do instalador em `rede\atualizacoes\` e confere tamanho, `MZ` e SHA-256.
+    async fn receive_update(&self, recv: &mut BufReader<iroh::endpoint::RecvStream>, file_name: &str, size: u64, sha256: &str) -> Result<PathBuf, String> {
+        use base64::Engine;
+        use tokio::io::AsyncWriteExt;
+        let dir = self.inner.dir.join("atualizacoes");
+        tokio::fs::create_dir_all(&dir).await.map_err(io)?;
+        let path = dir.join(file_name);
+        let outcome = async {
+            let mut target = tokio::fs::File::create(&path).await.map_err(io)?;
+            let mut received = 0u64;
+            while received < size {
+                match read_message(recv).await? {
+                    Some(Message::UpdateChunk { data }) => {
+                        let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(|_| "Pedaço do instalador inválido.".to_string())?;
+                        received += bytes.len() as u64;
+                        if received > size {
+                            return Err("O instalador veio maior que o anunciado.".to_string());
+                        }
+                        target.write_all(&bytes).await.map_err(io)?;
+                    }
+                    None => return Err("A conexão caiu no meio do envio.".into()),
+                    _ => return Err("Resposta inesperada.".into()),
+                }
+            }
+            target.flush().await.map_err(io)?;
+            drop(target);
+            let (check_path, sha256) = (path.clone(), sha256.to_string());
+            tokio::task::spawn_blocking(move || update::check_received(&check_path, size, &sha256)).await.map_err(io)?
+        }
+        .await;
+        match outcome {
+            Ok(()) => Ok(path),
+            Err(error) => {
+                let _ = tokio::fs::remove_file(&path).await;
+                Err(error)
+            }
+        }
+    }
+
     /// Todos os computadores para a página Rede: este, os confiáveis e os descobertos na rede local.
     pub fn devices(&self) -> Vec<NetDeviceView> {
         let me = self.info();
@@ -494,6 +607,7 @@ impl Node {
         let mut recv = BufReader::new(recv);
         let first = read_message(&mut recv).await?;
         let trusted = self.trusts(&remote);
+        let mut install_after: Option<PathBuf> = None;
         match first {
             Some(Message::Hello { info }) => {
                 if !self.visible() && !trusted {
@@ -564,6 +678,36 @@ impl Node {
                 };
                 write_message(&mut send, &reply).await?;
             }
+            Some(Message::UpdateOffer { version, file_name, size, sha256, signature }) => {
+                let device = self.inner.trust.lock().unwrap().get(&remote).cloned();
+                let refusal = match &device {
+                    None => Some("Este computador não está conectado a este aqui.".to_string()),
+                    Some(device) if !device.permissions.atualizar => Some("O outro computador não permite instalar atualizações vindas daqui (lá, na página Rede, ligue \"Instalar atualizações aqui\" para este computador).".to_string()),
+                    Some(_) => update::check_offer(&file_name, size, &sha256).and_then(|_| update::verify(&connection.remote_id(), &version, size, &sha256, &signature)).err(),
+                };
+                match (refusal, device) {
+                    (None, Some(device)) => {
+                        let offer = UpdateOfferData { from_id: remote.clone(), from_name: device.info.name.clone(), version: version.clone(), file_name: file_name.clone(), size };
+                        let decision = tokio::time::timeout(Duration::from_secs(300), (self.inner.update_asker)(offer)).await.unwrap_or(UpdateDecision::Later);
+                        if decision != UpdateDecision::Now {
+                            write_message(&mut send, &Message::UpdateReply { accept: false, reason: Some("Deixaram para depois no outro computador.".into()) }).await?;
+                        } else {
+                            write_message(&mut send, &Message::UpdateReply { accept: true, reason: None }).await?;
+                            let reply = match self.receive_update(&mut recv, &file_name, size, &sha256).await {
+                                Ok(path) => {
+                                    install_after = Some(path);
+                                    Message::UpdateResult { ok: true, text: format!("Instalando a versão {version} em {}.", self.info().name) }
+                                }
+                                Err(text) => Message::UpdateResult { ok: false, text },
+                            };
+                            write_message(&mut send, &reply).await?;
+                        }
+                    }
+                    (refusal, _) => {
+                        write_message(&mut send, &Message::Error { message: refusal.unwrap_or_default() }).await?;
+                    }
+                }
+            }
             _ => {
                 write_message(&mut send, &Message::Error { message: "Pedido desconhecido.".into() }).await?;
             }
@@ -571,6 +715,10 @@ impl Node {
         let _ = send.finish();
         // Espera o outro lado ler antes de fechar a conexão.
         let _ = tokio::time::timeout(Duration::from_secs(5), connection.closed()).await;
+        // Só instala depois de responder (o instalador fecha este app).
+        if let Some(path) = install_after {
+            (self.inner.update_installer)(path)?;
+        }
         Ok(())
     }
 }
@@ -662,6 +810,76 @@ mod tests {
         assert_eq!(b.remote_agent(a.addr(), "t1", "abra a calculadora").await.unwrap_err(), "Recusado neste computador.");
         a.set_permissions(&b.id(), Permissions { usar_ia: true, controlar: true, atualizar: false }).unwrap();
         assert_eq!(b.remote_agent(a.addr(), "t2", "abra a calculadora").await.unwrap(), "feito: abra a calculadora");
+        a.shutdown().await;
+        b.shutdown().await;
+    }
+
+    fn fake_installer(name: &str) -> (InstallerFile, String) {
+        let dir = std::env::temp_dir().join(format!("oa-installer-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Maior que um pedaço, para testar o envio em partes.
+        let mut bytes = b"MZ".to_vec();
+        bytes.extend((0..update::CHUNK + 1234).map(|i| (i % 251) as u8));
+        let path = dir.join("Open Assistant_0.2.0_x64-setup.exe");
+        std::fs::write(&path, &bytes).unwrap();
+        let sha = update::sha256_hex(&bytes);
+        (update::find_installer(&[dir]).unwrap(), sha)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_needs_permission_and_confirmation_then_installs() {
+        let installed: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
+        let record = installed.clone();
+        let a = Node::start_for_test_with("a5", fake("x"), UpdateDecision::Now, Arc::new(move |path| {
+            record.lock().unwrap().push(path);
+            Ok(())
+        }))
+        .await
+        .unwrap();
+        let b = Node::start_for_test("b5", fake("x")).await.unwrap();
+        let (file, sha) = fake_installer("5");
+        // Sem pareamento: recusado.
+        assert!(b.send_update(a.addr(), &file, &sha, &mut |_, _| {}).await.unwrap_err().contains("não está conectado"));
+        let code = a.show_code();
+        b.pair_with(a.addr(), &code).await.unwrap();
+        // Pareado, mas "Instalar atualizações aqui" desligado (padrão): recusado.
+        assert!(b.send_update(a.addr(), &file, &sha, &mut |_, _| {}).await.unwrap_err().contains("não permite instalar"));
+        a.set_permissions(&b.id(), Permissions { usar_ia: true, controlar: false, atualizar: true }).unwrap();
+        // SHA-256 que não bate com a assinatura/arquivo: recusado.
+        assert!(b.send_update(a.addr(), &file, &update::sha256_hex(b"outro"), &mut |_, _| {}).await.is_err());
+        assert!(installed.lock().unwrap().is_empty());
+        let mut progress = Vec::new();
+        let text = b.send_update(a.addr(), &file, &sha, &mut |sent, total| progress.push((sent, total))).await.unwrap();
+        assert!(text.contains("0.2.0"));
+        assert_eq!(progress.len(), 2);
+        assert_eq!(progress.last(), Some(&(file.size, file.size)));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let paths = installed.lock().unwrap().clone();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(std::fs::read(&paths[0]).unwrap(), std::fs::read(&file.path).unwrap());
+        a.shutdown().await;
+        b.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_left_for_later_is_not_installed() {
+        let installed: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
+        let record = installed.clone();
+        let a = Node::start_for_test_with("a6", fake("x"), UpdateDecision::Later, Arc::new(move |path| {
+            record.lock().unwrap().push(path);
+            Ok(())
+        }))
+        .await
+        .unwrap();
+        let b = Node::start_for_test("b6", fake("x")).await.unwrap();
+        let (file, sha) = fake_installer("6");
+        let code = a.show_code();
+        b.pair_with(a.addr(), &code).await.unwrap();
+        a.set_permissions(&b.id(), Permissions { usar_ia: true, controlar: false, atualizar: true }).unwrap();
+        assert!(b.send_update(a.addr(), &file, &sha, &mut |_, _| {}).await.unwrap_err().contains("depois"));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(installed.lock().unwrap().is_empty());
         a.shutdown().await;
         b.shutdown().await;
     }

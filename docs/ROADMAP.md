@@ -211,10 +211,13 @@ Design e testes de viabilidade: `docs/superpowers/specs/2026-09-27-novas-ferrame
 - [ ] Unsloth: "Sonhos profundos" (QLoRA com conversas aprovadas → GGUF → Ollama)
 - [ ] Paperclip: time de agentes sobre os agentes do Open Assistant (adaptador HTTP local)
 
-## 17. Rede fase 3: instalação remota de atualizações (retomar quando a permissão for liberada)
-- [ ] Recebe o instalador só de computador pareado com "Instalar atualizações aqui" ligado; confere SHA-256 + assinatura Ed25519 da chave do dono
-- [ ] Cartão "PC-Sala quer instalar a versão X" no PC de destino (Instalar agora / Depois / Sempre permitir deste computador)
-- [ ] Instalação silenciosa do NSIS (`/S`) e reabrir o app; botão "Atualizar todos" na página Rede
+## 17. Rede fase 3: instalação remota de atualizações (feito na sessão 7)
+- [x] Recebe o instalador só de computador pareado com "Instalar atualizações aqui" ligado (desligado por padrão, com confirmação ao ligar); confere assinatura Ed25519 da chave de quem envia (versão + tamanho + SHA-256), tamanho, cabeçalho `MZ` e SHA-256 (`network/update.rs`)
+- [x] Cartão "PC-Sala quer instalar a versão X" no PC de destino: Instalar agora / Depois. **Sempre pergunta** (a opção "Sempre permitir" foi descartada por segurança)
+- [x] Envio em pedaços de 1 MB com progresso; instalação silenciosa do NSIS (`/S`, por usuário) depois que o app fecha, e reabre o app; botões "Enviar atualização" e "Atualizar todos" na página Rede
+- [x] Instalador procurado em `Instalador\` ao lado do app (gerar com `npm run build:installer`)
+- [x] Verificado: 2 testes Rust de ponta a ponta + E2E com dois apps (sem permissão → recusa; Depois → nada baixado; Instalar agora → 10 MB em 0,6 s, arquivo idêntico). `OPEN_ASSISTANT_UPDATE_DRY_RUN=1` confere sem instalar (testes)
+- [ ] Falta: teste com um segundo PC físico instalando de verdade; Mac/Linux (prompt entregue para o Codex: mesmo protocolo, recusar instalador de outro sistema)
 
 Obscura (medido em 2026-09-27): bom em sites de documentação/simples (react.dev, Hacker News, Wikipedia: 2–3× mais texto que o download simples, com links, ~1,5 s); fraco em sites comerciais pesados/anti-robô (g1 travava 35 s; Amazon e Mercado Livre devolvem página de bloqueio; resultados do YouTube não aparecem; a build "stealth" não resolveu). Corrigido: `read_url` roda os dois em paralelo, Obscura com limite de 10 s, e fica com o texto mais útil.
 

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Copy, Eye, EyeOff, Globe, KeyRound, Link2, LoaderCircle, Network, Radar, Send, Trash2, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { Copy, Download, Eye, EyeOff, Globe, KeyRound, Link2, LoaderCircle, Network, Radar, Send, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { refreshNetDevices, useNetDevices, useRemoteActivity } from "../store/network";
 import { formatPairCode, meshLayout, normalizePairCode, type NetDevice } from "../utils/network";
@@ -9,6 +10,10 @@ import { PageHeader } from "./PageHeader";
 interface Neighbor { ip: string; mac: string }
 interface NetStatus { visible: boolean; internet: boolean; internetSaved: boolean; selfInfo: { id: string } }
 type Permissions = NonNullable<NetDevice["permissions"]>;
+interface InstallerFile { fileName: string; version: string; size: number; builtAt: number }
+/** Envio do instalador para um computador (fase 3). */
+interface UpdateSend { status: "sending" | "ok" | "error"; sent: number; total: number; text?: string }
+type UpdateSends = Record<string, UpdateSend>;
 
 const ICON = 46;
 
@@ -28,6 +33,34 @@ export function NetworkView() {
   const [error, setError] = useState<string | null>(null);
   const mesh = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 640, height: 380 });
+  const [installer, setInstaller] = useState<InstallerFile | null>(null);
+  const [sends, setSends] = useState<UpdateSends>({});
+
+  useEffect(() => {
+    void invoke<InstallerFile | null>("net_installer_info").then(setInstaller).catch(() => undefined);
+    const stop = listen<{ deviceId: string; sent: number; total: number }>("net-update-progress", (event) => {
+      const { deviceId, sent, total } = event.payload;
+      setSends((current) => current[deviceId]?.status === "sending" ? { ...current, [deviceId]: { ...current[deviceId], sent, total } } : current);
+    });
+    return () => { void stop.then((unlisten) => unlisten()); };
+  }, []);
+
+  /** Manda o instalador; lá aparece "Instalar agora / Depois" e só instala se aceitarem. */
+  const sendUpdate = async (device: NetDevice) => {
+    setSends((current) => ({ ...current, [device.id]: { status: "sending", sent: 0, total: installer?.size ?? 0 } }));
+    try {
+      const text = await invoke<string>("net_send_update", { deviceId: device.id });
+      setSends((current) => ({ ...current, [device.id]: { ...current[device.id], status: "ok", text } }));
+    } catch (reason) {
+      setSends((current) => ({ ...current, [device.id]: { ...current[device.id], status: "error", text: String(reason) } }));
+    }
+  };
+  const updatable = devices.filter((device) => !device.self && device.paired && device.online);
+  const updateAll = () => {
+    if (!installer || !updatable.length) return;
+    if (!confirm(`Enviar ${installer.fileName} para ${updatable.map((device) => device.name).join(", ")}? Em cada um aparece um aviso para instalar agora ou depois.`)) return;
+    for (const device of updatable) void sendUpdate(device);
+  };
 
   useEffect(() => {
     void refreshNetDevices();
@@ -70,6 +103,7 @@ export function NetworkView() {
       <button className={`page-button ${visible ? "" : "muted"}`} onClick={toggleVisible} title={visible ? "Outros computadores da rede local conseguem ver este" : "Só computadores já conectados enxergam este"}>{visible ? <Eye size={14} /> : <EyeOff size={14} />}{visible ? "Visível" : "Invisível"}</button>
       <button className={`page-button ${status?.internetSaved ? "" : "muted"}`} onClick={toggleInternet} title={status && status.internetSaved !== status.internet ? "Vale ao reabrir o app" : "Conectar computadores fora da rede de casa (opcional)"}><Globe size={14} />{status?.internetSaved ? "Internet" : "Só local"}{status && status.internetSaved !== status.internet ? " · reabra" : ""}</button>
       <button className="page-button" onClick={() => setDialog({ kind: "code" })}><KeyRound size={14} />Meu código</button>
+      <button className="page-button" disabled={!installer || !updatable.length} onClick={updateAll} title={installer ? `Envia ${installer.fileName} para os computadores conectados e online` : "Nenhum instalador encontrado (pasta Instalador ao lado do app)"}><Download size={14} />Atualizar todos</button>
       <button className="page-button primary" onClick={() => setDialog({ kind: "connect" })}><Link2 size={14} />Conectar por código</button>
     </PageHeader>
     <div className="page-scroll network-scroll">
@@ -92,10 +126,14 @@ export function NetworkView() {
           </svg>
           {devices.length <= 1 && <p className="mesh-empty"><Radar size={15} />Procurando computadores com o Open Assistant na rede local…</p>}
         </div>
-        {selected && <DevicePanel device={selected} onClose={() => setSelectedId(null)} onConnect={() => setDialog({ kind: "connect", deviceId: selected.id })} onError={setError} />}
+        {selected && <DevicePanel device={selected} installer={installer} send={sends[selected.id]} onSendUpdate={() => void sendUpdate(selected)} onClose={() => setSelectedId(null)} onConnect={() => setDialog({ kind: "connect", deviceId: selected.id })} onError={setError} />}
       </div>
 
       {error && <p className="node-note error network-error" onClick={() => setError(null)}>{error}</p>}
+
+      {Object.keys(sends).length > 0 && <ul className="network-list network-updates">
+        {Object.entries(sends).map(([id, send]) => <li key={id}><Download size={16} /><b>{byId.get(id)?.name ?? "Computador"}</b><UpdateStatus send={send} /><button className="icon-button" aria-label="Fechar" disabled={send.status === "sending"} onClick={() => setSends((current) => { const next = { ...current }; delete next[id]; return next; })}><X size={13} /></button></li>)}
+      </ul>}
 
       <h3 className="agents-section-title">Encontrados na rede</h3>
       {discovered.length ? <ul className="network-list">
@@ -112,10 +150,21 @@ export function NetworkView() {
   </section>;
 }
 
-function DevicePanel({ device, onClose, onConnect, onError }: { device: NetDevice; onClose: () => void; onConnect: () => void; onError: (message: string) => void }) {
+function UpdateStatus({ send }: { send: UpdateSend }) {
+  if (send.status === "sending") {
+    const percent = send.total ? Math.round((send.sent / send.total) * 100) : 0;
+    return <small className="network-update-status"><LoaderCircle size={12} className="spin" />{send.sent ? `Enviando… ${percent}%` : "Esperando alguém aceitar lá…"}</small>;
+  }
+  return <small className={`network-update-status ${send.status}`}>{send.text}</small>;
+}
+
+const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1).replace(".", ",")} MB`;
+
+function DevicePanel({ device, installer, send, onSendUpdate, onClose, onConnect, onError }: { device: NetDevice; installer: InstallerFile | null; send?: UpdateSend; onSendUpdate: () => void; onClose: () => void; onConnect: () => void; onError: (message: string) => void }) {
   const permissions = device.permissions;
   const setPermission = (key: keyof Permissions, value: boolean) => {
     if (!permissions) return;
+    if (key === "atualizar" && value && !confirm(`Permitir que ${device.name} mande versões do Open Assistant para instalar neste computador? Cada instalação ainda pede a sua confirmação aqui, e o instalador precisa vir assinado pela chave de ${device.name}.`)) return;
     void invoke("net_set_permissions", { deviceId: device.id, permissions: { ...permissions, [key]: value } }).then(() => refreshNetDevices()).catch((reason) => onError(String(reason)));
   };
   return <aside className="network-panel page-card">
@@ -131,7 +180,13 @@ function DevicePanel({ device, onClose, onConnect, onError }: { device: NetDevic
       <span className="menu-section-label">O que este computador pode fazer aqui</span>
       <label><input type="checkbox" checked={permissions.usarIA} onChange={(event) => setPermission("usarIA", event.target.checked)} /><span><b>Usar a IA deste computador</b><small>Ele manda perguntas para o seu Ollama.</small></span></label>
       <label className="soon"><input type="checkbox" checked={permissions.controlar} disabled /><span><b>Controlar este computador</b><small>Chega na fase 2 (sempre com confirmação aqui).</small></span></label>
-      <label className="soon"><input type="checkbox" checked={permissions.atualizar} disabled /><span><b>Instalar atualizações aqui</b><small>Chega na fase 3 (só instaladores assinados por você).</small></span></label>
+      <label><input type="checkbox" checked={permissions.atualizar} onChange={(event) => setPermission("atualizar", event.target.checked)} /><span><b>Instalar atualizações aqui</b><small>Ele pode mandar versões novas do app; você confirma cada instalação.</small></span></label>
+    </div>}
+    {!device.self && device.paired && <div className="network-update">
+      <span className="menu-section-label">Atualizar o app lá</span>
+      {installer ? <small>{installer.fileName} · {megabytes(installer.size)} · {new Date(installer.builtAt * 1000).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</small> : <small>Nenhum instalador na pasta Instalador ao lado do app.</small>}
+      <button className="page-button" disabled={!installer || !device.online || send?.status === "sending"} onClick={onSendUpdate}><Download size={13} />Enviar atualização</button>
+      {send && <UpdateStatus send={send} />}
     </div>}
     {!device.self && device.paired && <button className="page-button danger" onClick={() => void invoke("net_forget", { deviceId: device.id }).then(() => { onClose(); void refreshNetDevices(); }).catch((reason) => onError(String(reason)))}><Trash2 size={13} />Esquecer este computador</button>}
   </aside>;

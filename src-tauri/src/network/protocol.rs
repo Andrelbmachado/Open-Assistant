@@ -31,6 +31,13 @@ pub enum Message {
     #[serde(rename_all = "camelCase")]
     AgentTask { request_id: String, task: String },
     AgentResult { ok: bool, text: String },
+    /// Fase 3: "posso instalar esta versão aí?" (assinatura Ed25519 da chave de quem envia sobre versão+tamanho+SHA-256).
+    #[serde(rename_all = "camelCase")]
+    UpdateOffer { version: String, file_name: String, size: u64, sha256: String, signature: String },
+    UpdateReply { accept: bool, reason: Option<String> },
+    /// Um pedaço do instalador em base64 (depois do `UpdateReply { accept: true }`).
+    UpdateChunk { data: String },
+    UpdateResult { ok: bool, text: String },
     Error { message: String },
 }
 

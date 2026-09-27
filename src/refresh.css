@@ -992,3 +992,13 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .dream-row footer { display: flex; gap: 8px; }
 .dream-row footer span { flex: 1; }
 .dream-content { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; padding: 8px; border-radius: 8px; background: var(--card-hover, rgba(255,255,255,.05)); font-size: calc(11.5px * var(--fs-body, 1)); }
+
+/* Rede fase 3: enviar atualização para outro computador */
+.network-update { display: flex; flex-direction: column; gap: 6px; }
+.network-update small { color: var(--muted); font-size: calc(11px * var(--fs-body, 1)); overflow-wrap: anywhere; }
+.network-update .page-button { align-self: flex-start; }
+.network-update-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: calc(11.5px * var(--fs-body, 1)); overflow-wrap: anywhere; }
+.network-update-status.ok { color: var(--success, #30d158); }
+.network-update-status.error { color: var(--danger, #ff453a); }
+.network-updates li { flex-wrap: wrap; }
+.network-updates li .network-update-status { flex: 1; min-width: 160px; }

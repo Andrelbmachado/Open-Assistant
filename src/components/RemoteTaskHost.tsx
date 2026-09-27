@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Check, LoaderCircle, MonitorSmartphone, ShieldAlert, X } from "lucide-react";
+import { Check, Clock, Download, LoaderCircle, MonitorSmartphone, ShieldAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../store/store";
 import { useLocalModels } from "../store/localModelsStore";
@@ -11,6 +11,8 @@ import { isQAOffline } from "../utils/qaMode";
 import { SYS_REMOTE_CONTROL, SYS_REMOTE_SERVE } from "../utils/systemWorkflows";
 
 interface RemoteTask { id: string; fromId: string; fromName: string; task: string; needsConfirm: boolean }
+/** Outro computador quer instalar uma versão do app aqui (ROADMAP §17). */
+interface UpdateOffer { id: string; fromId: string; fromName: string; version: string; fileName: string; size: number; answer?: "install" | "later" }
 interface Card extends RemoteTask { phase: "ask" | "running" | "done"; steps: AgentStep[]; result?: string; ok?: boolean; confirm?: { step: AgentStep; resolve: (answer: "allow" | "always" | "deny") => void } }
 
 /**
@@ -22,6 +24,7 @@ export function RemoteTaskHost() {
   const { state } = useStore();
   const local = useLocalModels();
   const [cards, setCards] = useState<Card[]>([]);
+  const [offers, setOffers] = useState<UpdateOffer[]>([]);
   const latest = useRef({ state, local });
   latest.current = { state, local };
 
@@ -50,7 +53,8 @@ export function RemoteTaskHost() {
         serving?.end(`Respondeu a outro computador`);
       } else serving?.fail("modelo", text);
     });
-    return () => { void stop.then((unlisten) => unlisten()); void stopServe.then((unlisten) => unlisten()); };
+    const stopOffers = listen<UpdateOffer>("net-update-offer", (event) => setOffers((list) => [...list, event.payload]));
+    return () => { void stop.then((unlisten) => unlisten()); void stopServe.then((unlisten) => unlisten()); void stopOffers.then((unlisten) => unlisten()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -118,8 +122,21 @@ export function RemoteTaskHost() {
     }
   };
 
-  if (!cards.length) return null;
+  const answerOffer = (offer: UpdateOffer, install: boolean) => {
+    setOffers((list) => list.map((item) => item.id === offer.id ? { ...item, answer: install ? "install" : "later" } : item));
+    void invoke("net_update_reply", { id: offer.id, install }).catch(() => undefined);
+    if (!install) setTimeout(() => setOffers((list) => list.filter((item) => item.id !== offer.id)), 2500);
+  };
+
+  if (!cards.length && !offers.length) return null;
   return <div className="remote-task-stack" aria-live="polite">
+    {offers.map((offer) => <section key={offer.id} className={`remote-task-card page-card ${offer.answer ? "done" : "ask"}`}>
+      <header><Download size={16} /><div><b>{offer.fromName}</b><small>quer instalar a versão {offer.version} do Open Assistant aqui</small></div></header>
+      <p className="remote-task-text">{offer.fileName} · {(offer.size / 1024 / 1024).toFixed(1).replace(".", ",")} MB. O app fecha, instala e abre de novo sozinho.</p>
+      {!offer.answer && <footer><button className="page-button" onClick={() => answerOffer(offer, false)}><Clock size={13} />Depois</button><button className="page-button primary" onClick={() => answerOffer(offer, true)}><Check size={13} />Instalar agora</button></footer>}
+      {offer.answer === "install" && <p className="network-hint"><LoaderCircle size={12} className="spin" /> Recebendo e conferindo o instalador…</p>}
+      {offer.answer === "later" && <p className="remote-task-result">Fica para depois.</p>}
+    </section>)}
     {cards.map((card) => <section key={card.id} className={`remote-task-card page-card ${card.phase}`}>
       <header><MonitorSmartphone size={16} /><div><b>{card.fromName}</b><small>quer usar este computador</small></div>
         {card.phase === "done" && <button className="icon-button" aria-label="Fechar" onClick={() => setCards((list) => list.filter((item) => item.id !== card.id))}><X size={14} /></button>}

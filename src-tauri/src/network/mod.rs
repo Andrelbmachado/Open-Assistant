@@ -4,6 +4,7 @@ pub mod identity;
 pub mod node;
 pub mod pairing;
 pub mod protocol;
+pub mod update;
 
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::AtomicBool;
@@ -14,7 +15,8 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use node::{AgentExecutor, AgentTaskData, ChatExecutor, NetDeviceView, Node, NodeConfig};
+use node::{AgentExecutor, AgentTaskData, ChatExecutor, NetDeviceView, Node, NodeConfig, UpdateAsker, UpdateInstaller, UpdateOfferData};
+use update::UpdateDecision;
 use pairing::Permissions;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -40,6 +42,32 @@ pub struct NetState {
     error: OnceLock<String>,
     /// Tarefas remotas esperando a tela responder (`net_agent_reply`).
     pending: Mutex<HashMap<String, tokio::sync::oneshot::Sender<Result<String, String>>>>,
+    /// Ofertas de atualização esperando a tela responder (`net_update_reply`).
+    pending_updates: Mutex<HashMap<String, tokio::sync::oneshot::Sender<UpdateDecision>>>,
+}
+
+/// Outro computador quer instalar uma versão do app aqui: a tela mostra o cartão "Instalar agora / Depois".
+pub const UPDATE_OFFER_EVENT: &str = "net-update-offer";
+/// Progresso do envio do instalador para outro computador.
+pub const UPDATE_PROGRESS_EVENT: &str = "net-update-progress";
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UpdateOfferEvent {
+    id: String,
+    from_id: String,
+    from_name: String,
+    version: String,
+    file_name: String,
+    size: u64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProgressEvent {
+    device_id: String,
+    sent: u64,
+    total: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -136,6 +164,35 @@ async fn start_node(app: &AppHandle) -> Result<Node, String> {
             }
         })
     });
+    let offers_app = app.clone();
+    let update_asker: UpdateAsker = Arc::new(move |offer: UpdateOfferData| {
+        let app = offers_app.clone();
+        Box::pin(async move {
+            let id = uuid::Uuid::new_v4().to_string();
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let registered = match app.state::<NetState>().pending_updates.lock() {
+                Ok(mut pending) => pending.insert(id.clone(), sender).is_none(),
+                Err(_) => false,
+            };
+            if !registered {
+                return UpdateDecision::Later;
+            }
+            let event = UpdateOfferEvent { id: id.clone(), from_id: offer.from_id, from_name: offer.from_name, version: offer.version, file_name: offer.file_name, size: offer.size };
+            if app.emit(UPDATE_OFFER_EVENT, event).is_err() {
+                return UpdateDecision::Later;
+            }
+            let decision = tokio::time::timeout(Duration::from_secs(290), receiver).await;
+            if let Ok(mut pending) = app.state::<NetState>().pending_updates.lock() {
+                pending.remove(&id);
+            }
+            match decision {
+                Ok(Ok(decision)) => decision,
+                _ => UpdateDecision::Later,
+            }
+        })
+    });
+    let installer_app = app.clone();
+    let update_installer: UpdateInstaller = Arc::new(move |path| run_installer(&installer_app, &path));
     let internet = load_config(&dir).internet;
     let emitter = app.clone();
     Node::start(NodeConfig {
@@ -146,6 +203,8 @@ async fn start_node(app: &AppHandle) -> Result<Node, String> {
         mdns: true,
         executor,
         agent,
+        update_asker,
+        update_installer,
         on_change: Arc::new(move || {
             let _ = emitter.emit(DEVICES_EVENT, ());
         }),
@@ -292,6 +351,87 @@ pub async fn remote_agent(state: State<'_, NetState>, device_id: String, task: S
     node.remote_agent(addr, &request_id, &task).await
 }
 
+/// Texto entre aspas simples para o PowerShell.
+fn ps_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+/// Script que espera este app fechar, instala em silêncio (NSIS `/S`, por usuário, sem pedir administrador) e
+/// reabre o app instalado (ou este mesmo arquivo, se a instalação não criar outro).
+pub fn install_script(installer: &std::path::Path, current_exe: &std::path::Path) -> String {
+    format!(
+        "Start-Sleep -Seconds 2; Start-Process -FilePath {} -ArgumentList '/S' -Wait; \
+         $app = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Open Assistant') -Filter *.exe -ErrorAction SilentlyContinue | Where-Object {{ $_.Name -notlike 'uninstall*' }} | Select-Object -First 1 -ExpandProperty FullName; \
+         if (-not $app) {{ $app = {} }}; Start-Process -FilePath $app",
+        ps_quote(&installer.display().to_string()),
+        ps_quote(&current_exe.display().to_string())
+    )
+}
+
+/// Chamado depois que o usuário DESTE PC aceitou e o instalador passou nas conferências.
+fn run_installer(app: &AppHandle, installer: &std::path::Path) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    // Testes de ponta a ponta: recebe e confere tudo, mas não instala nem fecha o app.
+    if std::env::var_os("OPEN_ASSISTANT_UPDATE_DRY_RUN").is_some() {
+        crate::logs::error("rede", &format!("atualização conferida (teste, não instalada): {}", installer.display()));
+        return Ok(());
+    }
+    crate::logs::error("rede", &format!("instalando atualização recebida: {}", installer.display()));
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &install_script(installer, &exe)])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|error| format!("Não foi possível iniciar o instalador: {error}"))?;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(500));
+        app.exit(0);
+    });
+    Ok(())
+}
+
+/// Pastas onde procurar o instalador para enviar: `Instalador\` ao lado do app, a pasta do app e `rede\instalador\`.
+fn installer_dirs(app: &AppHandle) -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(folder) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.to_path_buf())) {
+        dirs.push(folder.join("Instalador"));
+        dirs.push(folder);
+    }
+    if let Ok(dir) = net_dir(app) {
+        dirs.push(dir.join("instalador"));
+    }
+    dirs
+}
+
+/// Instalador que seria enviado (a página Rede mostra nome, versão e data).
+#[tauri::command]
+pub fn net_installer_info(app: AppHandle) -> Option<update::InstallerFile> {
+    update::find_installer(&installer_dirs(&app))
+}
+
+/// Manda o instalador para outro computador pareado; lá aparece o cartão "Instalar agora / Depois".
+#[tauri::command]
+pub async fn net_send_update(app: AppHandle, state: State<'_, NetState>, device_id: String) -> Result<String, String> {
+    let node = state.node()?.clone();
+    let file = update::find_installer(&installer_dirs(&app)).ok_or("Nenhum instalador encontrado. Gere com `npm run build:installer` e coloque o arquivo \"Open Assistant_…-setup.exe\" na pasta Instalador, ao lado do app.")?;
+    let path = file.path.clone();
+    let sha256 = tauri::async_runtime::spawn_blocking(move || update::sha256_file(&path)).await.map_err(|error| error.to_string())??;
+    let addr = node.addr_of(&device_id)?;
+    let progress_app = app.clone();
+    let mut on_progress = move |sent: u64, total: u64| {
+        let _ = progress_app.emit(UPDATE_PROGRESS_EVENT, UpdateProgressEvent { device_id: device_id.clone(), sent, total });
+    };
+    tokio::time::timeout(Duration::from_secs(900), node.send_update(addr, &file, &sha256, &mut on_progress)).await.map_err(|_| "O envio passou de 15 minutos.".to_string())?
+}
+
+/// A tela deste PC respondeu a uma oferta de atualização.
+#[tauri::command]
+pub fn net_update_reply(state: State<NetState>, id: String, install: bool) -> Result<(), String> {
+    let sender = state.pending_updates.lock().map_err(|_| "estado da rede indisponível")?.remove(&id).ok_or("Oferta não encontrada (pode ter expirado).")?;
+    let _ = sender.send(if install { UpdateDecision::Now } else { UpdateDecision::Later });
+    Ok(())
+}
+
 /// Cancelamento do chat remoto usa o mesmo mapa do `ollama_cancel_chat`.
 pub fn chat_request(request_id: &str, model: &str, messages: serde_json::Value, think: Option<bool>, think_level: Option<String>, options: Option<serde_json::Value>, cancel: Arc<AtomicBool>) -> node::ChatRequestData {
     node::ChatRequestData { request_id: request_id.into(), model: model.into(), messages, think, think_level, options, cancel, from_name: String::new() }
@@ -300,6 +440,14 @@ pub fn chat_request(request_id: &str, model: &str, messages: serde_json::Value, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_script_quotes_paths_and_runs_silently() {
+        let script = install_script(std::path::Path::new(r"C:\Users\O'Neil\rede\atualizacoes\Open Assistant_0.2.0_x64-setup.exe"), std::path::Path::new(r"C:\Apps\Open Assistant.exe"));
+        assert!(script.contains(r"-FilePath 'C:\Users\O''Neil\rede\atualizacoes\Open Assistant_0.2.0_x64-setup.exe' -ArgumentList '/S' -Wait"));
+        assert!(script.contains(r"$app = 'C:\Apps\Open Assistant.exe'"));
+        assert!(script.starts_with("Start-Sleep"));
+    }
 
     #[test]
     fn parses_arp_lines_and_skips_multicast() {
