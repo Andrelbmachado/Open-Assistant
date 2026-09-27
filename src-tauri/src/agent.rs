@@ -865,7 +865,7 @@ pub fn tool_definitions() -> Value {
             json!({ "desktop": { "type": "boolean" } }), &[]),
         function("web_search", "Pesquisa na web e devolve títulos, links e resumos em texto (não abre o navegador).",
             json!({ "query": { "type": "string" } }), &["query"]),
-        function("read_url", "Lê o texto principal de uma página (sem abrir o navegador).",
+        function("read_url", "Lê o texto principal de uma página, inclusive sites que montam o conteúdo com JavaScript (sem abrir o navegador).",
             json!({ "url": { "type": "string" }, "max_chars": { "type": "integer" } }), &["url"]),
         function("read_skill_file", "Lê um arquivo de referência da skill, ex.: references/comandos-windows.md ou catalogo/INDEX.md.",
             json!({ "path": { "type": "string" } }), &["path"]),
@@ -1073,7 +1073,11 @@ Memória agora: RAM livre {:.1}/{:.1} GB, reservada livre {:.1}/{:.1} GB.",
         "focus_window" => outcome(computer::focus_window(&string("query"))),
         "list_windows" => outcome(Ok(desktop::overview_text(args.get("desktop").and_then(Value::as_bool).unwrap_or(false)))),
         "web_search" => outcome(web_search(&string("query"))),
-        "read_url" => outcome(read_url(&string("url"), args.get("max_chars").and_then(Value::as_u64).unwrap_or(6000) as usize)),
+        "read_url" => {
+            let max = args.get("max_chars").and_then(Value::as_u64).unwrap_or(6000) as usize;
+            // Obscura roda o JavaScript da página; sem ele (ou se falhar), o download simples de sempre.
+            outcome(super::obscura::read_page(app, &string("url"), max).or_else(|_| read_url(&string("url"), max)))
+        }
         "read_skill_file" => outcome(read_skill_file(app, &string("path"))),
         "ask_user" => ToolOutcome { status: "ok".into(), text: string("question"), ..Default::default() },
         "mcp_tools" => outcome(mcp::list_tools_text(app, &string("server"))),

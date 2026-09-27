@@ -866,7 +866,8 @@ mod tests {
                     url.starts_with("https://github.com/k2-fsa/sherpa-onnx/releases/download/")
                         || url.starts_with("https://github.com/leejet/stable-diffusion.cpp/releases/download/")
                         || url.starts_with("https://huggingface.co/microsoft/")
-                        || url.starts_with("https://github.com/rclone/rclone/releases/download/"),
+                        || url.starts_with("https://github.com/rclone/rclone/releases/download/")
+                        || url.starts_with("https://github.com/h4ckf0r0day/obscura/releases/download/"),
                     "{url}"
                 );
             }

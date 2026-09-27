@@ -27,6 +27,7 @@ mod desktop;
 mod places;
 mod imagegen;
 mod mcp;
+mod obscura;
 mod semantic;
 mod speech;
 mod storage;
