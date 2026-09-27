@@ -196,7 +196,7 @@ Design: `docs/superpowers/specs/2026-09-27-rede-de-computadores-design.md` · Pl
 - [x] Fase 1: aparelhos da rede sem o app (IP + MAC) com "Enviar instalador"
 - [x] Fase 1: chat e agente usando o modelo de outro computador (resposta em streaming; o agente controla o computador onde está o chat)
 - [x] Fase 2: mandar tarefas para o agente de outro computador ("no PC-Sala, abra a calculadora" no chat; cartão Permitir/Recusar no PC de destino quando "Controlar este PC" está desligado; fluxo do sistema "Controle remoto" no Node Editor). Verificado com dois apps: tarefa feita e recusa voltam ao chat
-- [ ] Fase 3: instalador (`.exe` NSIS) e atualizações assinadas empurradas pelo computador dono para os PCs abaixo dele — **parcial**: `npm run build:installer` gera `Open Assistant_<versão>_x64-setup.exe` (cópia em `Desktop\Assistente pessoal\Instalador`). A instalação remota (receber o .exe de outro PC e rodar em silêncio) foi **bloqueada pelo sistema de permissões do Claude Code** em 2026-09-27: precisa da decisão/autorização do André antes de implementar
+- [x] Fase 3: instalador (`.exe` NSIS) e atualizações assinadas enviadas para os outros PCs — feito, ver §17
 - [x] Fase 4 (primeira versão): botão opcional "Internet" na página Rede (desligado por padrão) usa os servidores públicos do iroh/n0 para achar e retransmitir; conecta com endereço + código de 6 dígitos. Testado no mesmo PC (fluxo da tela); falta testar fora de casa de verdade. Código fixo tipo AnyDesk + conta própria continuam dependendo de um servidor da empresa
 - [ ] Fase 5: app para macOS (necessário para o cenário "estou no MacBook")
 - [ ] Todos os fluxos da rede visíveis no Node Editor (seção 11)
