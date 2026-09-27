@@ -16,7 +16,10 @@ import { listen } from "@tauri-apps/api/event";
 import { matchAction, runAgent, runCatalogAction, warmAgent, type AccessMode, type AgentResult, type AgentStep } from "../utils/agentRunner";
 import { invoke } from "@tauri-apps/api/core";
 import { allCloudProviders, CLOUD_PRODUCT_NAMES, cloudModelValue, providerModels } from "../utils/cloudModels";
-import { applyDetected, detectMemory, memoryPrompt } from "../utils/memory";
+import { memoryPrompt } from "../utils/memory";
+import { learnWithTrace } from "../utils/memoryFlow";
+import { traceSystem } from "../store/systemTrace";
+import { SYS_MEMORY_SAVE } from "../utils/systemWorkflows";
 import { looksLikePcAction } from "../utils/pcIntent";
 import { looksLikeWorkflowRequest } from "../utils/workflowService";
 import { parseCalculation } from "../utils/calc";
@@ -569,7 +572,7 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
     let memory = state.memory;
     let memoryNote: string[] | undefined;
     if (memory.learn && sourceText) {
-      const learned = applyDetected(memory, detectMemory(sourceText));
+      const learned = learnWithTrace(memory, sourceText, () => traceSystem(SYS_MEMORY_SAVE, { chatId }));
       if (learned.changes.length) { memory = learned.memory; memoryNote = learned.changes; dispatch({ type: "setMemory", patch: learned.memory }); }
     }
     const memoryBlock = memoryPrompt(memory);

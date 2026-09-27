@@ -7,6 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "./store";
 import { parseMemoryFile, serializeMemoryFile } from "../utils/memory";
 import { isQAOffline } from "../utils/qaMode";
+import { releaseTrace } from "./systemTrace";
+import { MEMORY_TRACE_KEY } from "../utils/memoryFlow";
 
 export function useMemoryFileSync() {
   const { state, dispatch } = useStore();
@@ -29,11 +31,16 @@ export function useMemoryFileSync() {
   }, [dispatch]);
 
   useEffect(() => {
-    if (!ready || isQAOffline()) return;
+    if (!ready || isQAOffline()) { const trace = releaseTrace(MEMORY_TRACE_KEY); trace?.skip("gravar", "modo QA: arquivo não gravado"); trace?.end("Memória salva (sem arquivo)"); return; }
     const text = serializeMemoryFile(state.memory);
     // Mesmo conteúdo (ex.: acabou de ser lido do arquivo) não precisa ser regravado.
     if (text === lastText.current || (lastText.current && serializeMemoryFile(parseMemoryFile(lastText.current)) === text)) return;
-    const timer = setTimeout(() => { lastText.current = text; void invoke("memory_file_write", { text }).catch(() => undefined); }, 400);
+    const timer = setTimeout(() => {
+      lastText.current = text;
+      void invoke("memory_file_write", { text })
+        .then(() => { const trace = releaseTrace(MEMORY_TRACE_KEY); trace?.step("gravar", "memoria-da-ia.md atualizado"); trace?.end("Memória salva"); })
+        .catch((error) => releaseTrace(MEMORY_TRACE_KEY)?.fail("gravar", String(error)));
+    }, 400);
     return () => clearTimeout(timer);
   }, [state.memory, ready]);
 }
