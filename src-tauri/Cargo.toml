@@ -43,5 +43,12 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 pdf-extract = "0.9"
 # Cartão "Editou N arquivos": diff por linha das alterações que a IA fez (como no Claude Code).
 similar = "2"
+# Rede de computadores (ROADMAP §15): túnel QUIC criptografado entre os apps (iroh), descoberta na
+# rede local (mDNS), MAC para mostrar na tela e código de pareamento.
+iroh = "1.2"
+iroh-mdns-address-lookup = "0.5"
+mac_address = "1.1"
+rand = "0.9"
+tokio = { version = "1", features = ["io-util", "sync", "time", "macros", "rt-multi-thread"] }
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_HiDpi", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant", "Win32_System_SystemInformation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
