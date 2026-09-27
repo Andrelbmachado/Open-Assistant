@@ -233,7 +233,7 @@ Design e testes de viabilidade: `docs/superpowers/specs/2026-09-27-novas-ferrame
 - [x] Laço de reconexão independente do mDNS (na hora e a cada 10 s); `net_reconnect` (12 s) e `net_reconnect_all`; duplo clique reconecta; Scan também reconecta
 - [x] Erros do iroh em português com dica (`dica_conexao`), com o original entre parênteses
 - [x] `rede\log.jsonl` (gira em 2 MB) com os eventos do Mac; `rede\estado.json` a cada 5 s; "+ › Copiar relatório para IA" e "Abrir logs da rede"
-- [x] Canal local `\.\pipe\open-assistant-rede-<usuário>` (ACL só do usuário) e MCP `Open Assistant.exe --mcp-rede` com as 7 ferramentas do Mac; comando para registrar em Configurações › Conectores MCP
+- [x] Canal local `\\.\pipe\open-assistant-rede-<usuário>` (ACL só do usuário) e MCP `Open Assistant.exe --mcp-rede` com as 7 ferramentas do Mac; comando para registrar em Configurações › Conectores MCP
 - [x] Verificado: 125 testes Rust (porta, sem endereço, log de estado, MCP fechado) + E2E com dois apps (Internet sem reabrir em 4 s, porta mantida, MCP rede_tarefa respondeu)
 - [ ] Testes com o Mac real (itens 1–5 do fim do prompt)
 
