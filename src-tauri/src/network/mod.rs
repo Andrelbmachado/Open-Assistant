@@ -3,3 +3,4 @@
 pub mod identity;
 pub mod pairing;
 pub mod protocol;
+pub mod node;

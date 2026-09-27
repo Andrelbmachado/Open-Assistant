@@ -4340,6 +4340,7 @@ dependencies = [
  "iroh-mdns-address-lookup",
  "keyring",
  "mac_address",
+ "n0-future",
  "pdf-extract",
  "rand 0.9.5",
  "regex",
