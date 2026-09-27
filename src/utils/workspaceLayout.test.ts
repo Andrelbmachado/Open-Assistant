@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignChatAreas, calculateSplitIntent, listAreas, hasWorkspaceArea, isValidWorkspaceLayout, type WorkspaceLayoutNode, adoptWorkflows, assignWorkflowAreas, setAreaWorkflow } from "./workspaceLayout";
+import { assignChatAreas, calculateSplitIntent, listAreas, hasWorkspaceArea, isValidWorkspaceLayout, type WorkspaceLayoutNode, adoptWorkflows, assignWorkflowAreas, openWorkflowBeside, setAreaWorkflow } from "./workspaceLayout";
 
 describe("calculateSplitIntent", () => {
   it("creates a left horizontal area from a single continuous drag", () => {
@@ -95,5 +95,18 @@ describe("workflow areas", () => {
   it("adopts saved workflows that no area shows (old canvas migrated)", () => {
     const adopted = adoptWorkflows(setAreaWorkflow(layout, "a", "sumiu"), ["migrado", "outro"]);
     expect(listAreas(adopted).map((area) => area.workflowId)).toEqual(["migrado", "outro"]);
+  });
+  it("keeps areas that show a pinned (system) workflow", () => {
+    const adopted = adoptWorkflows(setAreaWorkflow(layout, "a", "sys-memoria-salvar"), ["migrado"], ["sys-memoria-salvar"]);
+    expect(listAreas(adopted).map((area) => area.workflowId)).toEqual(["sys-memoria-salvar", "migrado"]);
+  });
+
+  it("opens a workflow beside an area, or reuses the area that already shows it", () => {
+    const first = openWorkflowBeside(layout, "a", "sys-memoria-salvar", { area: "novo", split: "s1" });
+    expect(first.areaId).toBe("novo");
+    expect(listAreas(first.layout).find((area) => area.id === "novo")).toMatchObject({ view: "workflow", workflowId: "sys-memoria-salvar" });
+    const again = openWorkflowBeside(first.layout, "a", "sys-memoria-salvar", { area: "outro", split: "s2" });
+    expect(again.areaId).toBe("novo");
+    expect(again.layout).toBe(first.layout);
   });
 });

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, type ReactNode } from "react";
-import { adoptWorkflows, assignChatAreas, assignWorkflowAreas, hasWorkspaceArea, isValidWorkspaceLayout, listAreas, setAreaWorkflow, type ViewKind, type WorkspaceArea, type WorkspaceLayoutNode, type WorkspaceSplit } from "../utils/workspaceLayout";
+import { adoptWorkflows, assignChatAreas, assignWorkflowAreas, hasWorkspaceArea, isValidWorkspaceLayout, listAreas, openWorkflowBeside, setAreaWorkflow, type ViewKind, type WorkspaceArea, type WorkspaceLayoutNode, type WorkspaceSplit } from "../utils/workspaceLayout";
 import { DEFAULT_ORBITAL_SKIN, isOrbitalSkin, type OrbitalSkin } from "../utils/orbitalState";
 import { DEFAULT_EFFORT, isEffortLevel, type EffortLevel } from "../utils/effort";
 import { DEFAULT_EFFORT_SKIN, isEffortSkin, type EffortSkin } from "../utils/effortSkin";
@@ -8,6 +8,7 @@ import type { AccessMode, AgentStep } from "../utils/agentRunner";
 import type { ChangeSet } from "../utils/fileChanges";
 import { NEW_CHAT_TITLE, titleFromMessage } from "../utils/chatTitle";
 import { EMPTY_MEMORY, restoreMemory, type MemoryFact, type UserMemory } from "../utils/memory";
+import { isSystemWorkflow, SYSTEM_WORKFLOWS } from "../utils/systemWorkflows";
 import { blankWorkflow, KIND_BY_ID, migrateLegacyCanvas, WORKFLOW_TEMPLATES, withDefaults, type ParamValue, type WorkflowDoc } from "../utils/workflow";
 import { DEFAULT_FONT_SCALE, clampFontScale, fontScaleVariables, restoreFontScale, type FontScale, type FontScaleKey } from "../utils/fontScale";
 
@@ -228,6 +229,10 @@ export type Action =
   | { type: "wfReplace"; doc: WorkflowDoc }
   | { type: "wfOpen"; workflowId: string; areaId: string }
   | { type: "wfDelete"; workflowId: string }
+  /** Abre um fluxo do sistema (só visualização) na área ativa. */
+  | { type: "openSystemFlow"; workflowId: string }
+  /** Abre um fluxo do sistema numa área nova ao lado (ex.: ao lado do chat). */
+  | { type: "openFlowBeside"; workflowId: string; besideAreaId: string }
   /** Resultado de automação: vai para a conversa "Automação: <nome>" (criada se preciso), sem trocar a tela. */
   | { type: "postAutomationMessage"; title: string; text: string }
   | { type: "addAgent"; workspace: AssistantAgent["workspace"] }
@@ -369,7 +374,7 @@ function withChatAreas(state: AppState): AppState {
     return chat.id;
   });
   const createdWorkflows: WorkflowDoc[] = [];
-  const workflowLayout = assignWorkflowAreas(layout, new Set(state.workflows.map((doc) => doc.id)), () => {
+  const workflowLayout = assignWorkflowAreas(layout, new Set([...state.workflows.map((doc) => doc.id), ...SYSTEM_WORKFLOWS.map((doc) => doc.id)]), () => {
     const doc = blankWorkflow(nextWorkflowName([...state.workflows, ...createdWorkflows]));
     createdWorkflows.push(doc);
     return doc.id;
@@ -460,6 +465,18 @@ function baseReducer(state: AppState, action: Action): AppState {
       return { ...state, workspaceLayout: setAreaWorkflow(state.workspaceLayout, action.areaId, action.workflowId), activeAreaId: action.areaId, activeView: "workflow" };
     }
     case "wfDelete": return { ...state, workflows: state.workflows.filter((doc) => doc.id !== action.workflowId), agents: state.agents.map((agent) => agent.workflowId === action.workflowId ? { ...agent, workflowId: undefined } : agent) };
+    case "openSystemFlow": {
+      if (!isSystemWorkflow(action.workflowId)) return state;
+      const holder = listAreas(state.workspaceLayout).find((area) => area.view === "workflow" && area.workflowId === action.workflowId);
+      if (holder) return { ...state, activeAreaId: holder.id, activeView: "workflow" };
+      const layout = setAreaWorkflow(updateAreaView(state.workspaceLayout, state.activeAreaId, "workflow"), state.activeAreaId, action.workflowId);
+      return { ...state, workspaceLayout: layout, activeView: "workflow" };
+    }
+    case "openFlowBeside": {
+      if (!isSystemWorkflow(action.workflowId)) return state;
+      const opened = openWorkflowBeside(state.workspaceLayout, action.besideAreaId, action.workflowId, { area: crypto.randomUUID(), split: crypto.randomUUID() });
+      return { ...state, workspaceLayout: opened.layout, activeAreaId: opened.areaId, activeView: "workflow" };
+    }
     case "addAgent": {
       const id = crypto.randomUUID();
       const count = state.agents.length + 1;
@@ -627,7 +644,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         && isValidWorkspaceLayout(restored.workspaceLayout)
         && hasWorkspaceArea(restored.workspaceLayout, restored.activeAreaId);
       const workflows = restoreWorkflows(restored);
-      const layout = adoptWorkflows(layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, workflows.map((doc) => doc.id));
+      const layout = adoptWorkflows(layoutIsCurrent ? (restored.workspaceLayout ?? fallback.workspaceLayout) : fallback.workspaceLayout, workflows.map((doc) => doc.id), SYSTEM_WORKFLOWS.map((doc) => doc.id));
       return withChatAreas({ ...fallback, ...restored, layoutVersion: fallback.layoutVersion, activeAreaId: layoutIsCurrent ? (restored.activeAreaId ?? fallback.activeAreaId) : fallback.activeAreaId, activeView: layoutIsCurrent ? (restored.activeView ?? fallback.activeView) : fallback.activeView, workspaceLayout: layout, accent: ["#d8d8dc", "#b7b7bd", "#929299", "#6f6f76", "#f1f1f3"].includes(restored.accent) ? restored.accent : fallback.accent, fontScale: restoreFontScale(restored.fontScale), orbitalSkin: restored.faceVersion === fallback.faceVersion && isOrbitalSkin(restored.orbitalSkin) ? restored.orbitalSkin : fallback.orbitalSkin, faceVersion: fallback.faceVersion, effort: isEffortLevel(restored.effort) ? restored.effort : fallback.effort, effortSkin: isEffortSkin(restored.effortSkin) ? restored.effortSkin : fallback.effortSkin, voice: { ...fallback.voice, ...(restored.voice ?? {}) }, access: ["Perguntar", "Automático", "Somente leitura"].includes(restored.access) ? restored.access : fallback.access, robotSpeed: restoreRobotSpeed(restored.robotSpeed), memory: restoreMemory(restored.memory), chats: layoutIsCurrent ? tidyChats(settleInterruptedMessages(restored.chats ?? fallback.chats), restored.activeChatId ?? fallback.activeChatId, layoutIsCurrent ? restored.workspaceLayout : undefined) : fallback.chats, projects: layoutIsCurrent ? (restored.projects ?? fallback.projects) : fallback.projects, workflows, agents: restored.agents ?? fallback.agents, currentAgentId: restored.currentAgentId ?? fallback.currentAgentId, settingsOpen: false, settingsTab: undefined, settingsFocusModel: undefined, paletteOpen: false });
     } catch { return withChatAreas(fallback); }
   });

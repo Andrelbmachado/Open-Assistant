@@ -118,12 +118,12 @@ export function setAreaWorkflow(node: WorkspaceLayoutNode, id: string, workflowI
  * Ao abrir o app: áreas de nodes sem workflow (ou com um que não existe mais) adotam os workflows salvos
  * que nenhuma área mostra — é assim que o canvas antigo migrado aparece na área que já existia.
  */
-export function adoptWorkflows(layout: WorkspaceLayoutNode, workflowIds: string[]): WorkspaceLayoutNode {
+export function adoptWorkflows(layout: WorkspaceLayoutNode, workflowIds: string[], keep: string[] = []): WorkspaceLayoutNode {
   const shown = new Set(listAreas(layout).map((area) => area.workflowId).filter((id): id is string => Boolean(id && workflowIds.includes(id))));
   const orphans = workflowIds.filter((id) => !shown.has(id));
   let next = layout;
   for (const area of listAreas(layout).filter((item) => item.view === "workflow")) {
-    if (area.workflowId && workflowIds.includes(area.workflowId)) continue;
+    if (area.workflowId && (workflowIds.includes(area.workflowId) || keep.includes(area.workflowId))) continue;
     const adopted = orphans.shift();
     if (!adopted) break;
     next = setAreaWorkflow(next, area.id, adopted);
@@ -145,4 +145,15 @@ export function assignWorkflowAreas(layout: WorkspaceLayoutNode, workflowIds: Re
     if (area.workflowId !== workflowId) next = setAreaWorkflow(next, area.id, workflowId);
   }
   return next;
+}
+
+/** Mostra o workflow numa área nova à direita de `besideAreaId` (ex.: o fluxo da memória ao lado do chat). Se alguma área já mostra, usa ela. */
+export function openWorkflowBeside(layout: WorkspaceLayoutNode, besideAreaId: string, workflowId: string, ids: { area: string; split: string }): { layout: WorkspaceLayoutNode; areaId: string } {
+  const holder = listAreas(layout).find((area) => area.view === "workflow" && area.workflowId === workflowId);
+  if (holder) return { layout, areaId: holder.id };
+  const visit = (node: WorkspaceLayoutNode): WorkspaceLayoutNode => {
+    if ("view" in node) return node.id === besideAreaId ? { id: ids.split, axis: "horizontal", fraction: .55, first: node, second: { id: ids.area, view: "workflow", workflowId } } : node;
+    return { ...node, first: visit(node.first), second: visit(node.second) };
+  };
+  return { layout: visit(layout), areaId: ids.area };
 }
