@@ -13,7 +13,7 @@ import { NetworkView } from "./NetworkView";
 import { BrowserView } from "./BrowserView";
 import { useDismiss } from "../utils/useDismiss";
 
-const labels: Record<ViewKind, string> = { chat: "Chat", workflow: "Nodes", terminal: "Terminal", agents: "Agentes", marketplace: "Marketplace", files: "Arquivos", browser: "Browser", dashboard: "Dashboard", network: "Rede" };
+const labels: Record<ViewKind, string> = { chat: "Chat", workflow: "Nodes", terminal: "Terminal", agents: "Agentes", marketplace: "Marketplace", files: "Arquivos", browser: "Browser", dashboard: "Dashboard", network: "Remoto" };
 const areaViews: ViewKind[] = ["chat", "workflow", "agents", "terminal", "files", "browser", "dashboard", "marketplace", "network"];
 
 function ViewRenderer({ kind, chatId, areaId, workflowId }: { kind: ViewKind; chatId?: string; areaId: string; workflowId?: string }) {

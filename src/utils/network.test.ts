@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPairCode, meshLayout, normalizePairCode, parseRemoteModel, parseRemoteTarget, remoteModelId, type NetDevice } from "./network";
+import { connectLink, formatPairCode, lastSeenLabel, meshLayout, normalizePairCode, parseConnectLink, parseRemoteModel, parseRemoteTarget, remoteModelId, type NetDevice } from "./network";
 
 const dev = (id: string, extra: Partial<NetDevice> = {}): NetDevice => ({ id, name: id, kind: "desktop", os: "Windows 11", models: [], online: true, paired: true, self: false, link: "local", ...extra });
 
@@ -49,5 +49,24 @@ describe("parseRemoteTarget", () => {
     expect(parseRemoteTarget("no NOTEBOOK, abra o chrome", list)).toBeNull();
     expect(parseRemoteTarget("no Brasil, qual a capital?", list)).toBeNull();
     expect(parseRemoteTarget("no PC-Sala", list)).toBeNull();
+  });
+});
+
+describe("link de conexão", () => {
+  const id = "2d360e09087381a64f030c8b0e5f7be084ef8983c3b19782702cb76febb61f48";
+  it("leva endereço e código, e aceita só o endereço (como o Mac mostra)", () => {
+    expect(parseConnectLink(connectLink(id, "482913"))).toEqual({ deviceId: id, code: "482913" });
+    expect(parseConnectLink(`  ${id.toUpperCase()}  `)).toEqual({ deviceId: id, code: null });
+    expect(parseConnectLink(`openassistant://conectar/${id}`)).toEqual({ deviceId: id, code: null });
+    expect(parseConnectLink("https://exemplo.com")).toBeNull();
+    expect(parseConnectLink("abc")).toBeNull();
+  });
+  it("diz há quanto tempo o computador respondeu", () => {
+    const now = 1_000_000;
+    expect(lastSeenLabel(undefined, now)).toBe("nunca");
+    expect(lastSeenLabel(now - 10, now)).toBe("agora");
+    expect(lastSeenLabel(now - 300, now)).toBe("há 5 min");
+    expect(lastSeenLabel(now - 7200, now)).toBe("há 2 h");
+    expect(lastSeenLabel(now - 86400, now)).toBe("há 1 dia");
   });
 });

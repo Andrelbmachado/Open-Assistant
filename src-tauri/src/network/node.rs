@@ -126,6 +126,8 @@ pub struct NetDeviceView {
     pub is_self: bool,
     pub link: Option<String>,
     pub permissions: Option<Permissions>,
+    /// Última vez que respondeu (histórico dos computadores já conectados).
+    pub last_seen: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -269,6 +271,48 @@ impl Node {
         self.inner.visible.load(Ordering::SeqCst)
     }
 
+    /// Código que a tela Remoto mostra o tempo todo: o mesmo enquanto valer; outro quando expira, é usado ou trava.
+    pub fn current_code(&self) -> (String, u64) {
+        let now = Instant::now();
+        let mut current = self.inner.code.lock().unwrap();
+        if !current.as_ref().is_some_and(|code| code.usable(now)) {
+            *current = Some(PairCode::new(now));
+        }
+        let code = current.as_ref().unwrap();
+        (code.code().to_string(), code.expires_in(now).as_secs())
+    }
+
+    /// Reconecta a um computador do histórico (usa os últimos endereços salvos).
+    pub async fn reconnect(&self, id: &str) -> Result<DeviceInfo, String> {
+        let addr = self.addr_of(id)?;
+        self.hello(addr).await
+    }
+
+    /// Guarda no histórico por onde a conexão passou (IP da rede local e/ou servidor de retransmissão).
+    fn learn_paths(&self, id: &str, connection: &Connection) {
+        let mut addrs: Vec<iroh::TransportAddr> = connection
+            .paths()
+            .iter()
+            .map(|path| path.remote_addr().clone())
+            .filter(|addr| matches!(addr, iroh::TransportAddr::Ip(_) | iroh::TransportAddr::Relay(_)))
+            .collect();
+        addrs.sort();
+        addrs.dedup();
+        let now = now_secs();
+        let mut trust = self.inner.trust.lock().unwrap();
+        let Some(mut device) = trust.get(id).cloned() else { return };
+        let new_addrs = !addrs.is_empty() && addrs != device.addrs;
+        if !new_addrs && now.saturating_sub(device.last_seen) < 60 {
+            return;
+        }
+        if new_addrs {
+            device.addrs = addrs;
+        }
+        device.last_seen = now;
+        trust.upsert(device);
+        let _ = trust.save();
+    }
+
     pub fn show_code(&self) -> String {
         let code = PairCode::new(Instant::now());
         let text = code.code().to_string();
@@ -308,10 +352,9 @@ impl Node {
             }
         }
         for device in &self.inner.trust.lock().unwrap().devices {
-            if !addrs.contains_key(&device.info.id) {
-                if let Ok(key) = device.info.id.parse::<PublicKey>() {
-                    addrs.insert(device.info.id.clone(), EndpointAddr::new(key));
-                }
+            if let Ok(key) = device.info.id.parse::<PublicKey>() {
+                let addr = addrs.remove(&device.info.id).unwrap_or_else(|| EndpointAddr::new(key));
+                addrs.insert(device.info.id.clone(), addr.with_addrs(device.addrs.clone()));
             }
         }
         addrs.into_values().collect()
@@ -319,11 +362,10 @@ impl Node {
 
     /// Endereço de um computador pelo id: o último visto; senão, só a chave (a descoberta local acha o resto).
     pub fn addr_of(&self, id: &str) -> Result<EndpointAddr, String> {
-        if let Some(addr) = self.inner.seen.lock().unwrap().get(id).and_then(|seen| seen.addr.clone()) {
-            return Ok(addr);
-        }
         let key = id.parse::<PublicKey>().map_err(|_| "Identificador de computador inválido.".to_string())?;
-        Ok(EndpointAddr::new(key))
+        let seen = self.inner.seen.lock().unwrap().get(id).and_then(|seen| seen.addr.clone());
+        let saved = self.inner.trust.lock().unwrap().get(id).map(|device| device.addrs.clone()).unwrap_or_default();
+        Ok(seen.unwrap_or_else(|| EndpointAddr::new(key)).with_addrs(saved))
     }
 
     fn remember(&self, mut info: DeviceInfo, id: String, addr: Option<EndpointAddr>) {
@@ -364,6 +406,7 @@ impl Node {
             Some(Message::Hello { info }) => {
                 let id = connection.remote_id().to_string();
                 self.remember(info.clone(), id.clone(), Some(addr));
+                self.learn_paths(&id, &connection);
                 Ok(DeviceInfo { id, ..info })
             }
             Some(Message::Error { message }) => Err(message),
@@ -374,7 +417,7 @@ impl Node {
     /// Conecta a outro computador com o código que ele mostrou.
     pub async fn pair_with(&self, addr: EndpointAddr, code: &str) -> Result<(), String> {
         let info = self.hello(addr.clone()).await?;
-        let (_connection, mut send, mut recv) = self.open(addr).await?;
+        let (connection, mut send, mut recv) = self.open(addr).await?;
         write_message(&mut send, &Message::PairRequest { code: code.to_string(), info: self.info() }).await?;
         let reply = read_message(&mut recv).await?;
         let _ = send.finish();
@@ -382,9 +425,10 @@ impl Node {
             Some(Message::PairResult { ok: true, .. }) => {
                 {
                     let mut trust = self.inner.trust.lock().unwrap();
-                    trust.upsert(TrustedDevice { info, permissions: Permissions::default(), paired_at: now_secs() });
+                    trust.upsert(TrustedDevice { info, permissions: Permissions::default(), paired_at: now_secs(), addrs: Vec::new(), last_seen: now_secs() });
                     trust.save()?;
                 }
+                self.learn_paths(&connection.remote_id().to_string(), &connection);
                 (self.inner.on_change)();
                 Ok(())
             }
@@ -548,6 +592,7 @@ impl Node {
             is_self: true,
             link: None,
             permissions: None,
+            last_seen: None,
         }];
         let seen = self.inner.seen.lock().unwrap().clone();
         let lan = self.inner.lan.lock().unwrap().clone();
@@ -569,6 +614,7 @@ impl Node {
                 is_self: false,
                 link: link(&device.info.id),
                 permissions: Some(device.permissions.clone()),
+                last_seen: Some(if recent.is_some_and(|s| s.last.elapsed() < ONLINE_WINDOW) { now_secs() } else { device.last_seen }).filter(|at| *at > 0),
             });
         }
         for (id, s) in &seen {
@@ -588,6 +634,7 @@ impl Node {
                 is_self: false,
                 link: link(id),
                 permissions: None,
+                last_seen: None,
             });
         }
         list
@@ -607,6 +654,9 @@ impl Node {
         let mut recv = BufReader::new(recv);
         let first = read_message(&mut recv).await?;
         let trusted = self.trusts(&remote);
+        if trusted {
+            self.learn_paths(&remote, &connection);
+        }
         let mut install_after: Option<PathBuf> = None;
         match first {
             Some(Message::Hello { info }) => {
@@ -629,9 +679,10 @@ impl Node {
                     info.id = remote.clone();
                     {
                         let mut trust = self.inner.trust.lock().unwrap();
-                        trust.upsert(TrustedDevice { info, permissions: Permissions::default(), paired_at: now_secs() });
+                        trust.upsert(TrustedDevice { info, permissions: Permissions::default(), paired_at: now_secs(), addrs: Vec::new(), last_seen: now_secs() });
                         trust.save()?;
                     }
+                    self.learn_paths(&remote, &connection);
                     (self.inner.on_change)();
                     write_message(&mut send, &Message::PairResult { ok: true, reason: None }).await?;
                 } else {
@@ -682,7 +733,7 @@ impl Node {
                 let device = self.inner.trust.lock().unwrap().get(&remote).cloned();
                 let refusal = match &device {
                     None => Some("Este computador não está conectado a este aqui.".to_string()),
-                    Some(device) if !device.permissions.atualizar => Some("O outro computador não permite instalar atualizações vindas daqui (lá, na página Rede, ligue \"Instalar atualizações aqui\" para este computador).".to_string()),
+                    Some(device) if !device.permissions.atualizar => Some("O outro computador não permite instalar atualizações vindas daqui (conecte os dois de novo pela tela Remoto).".to_string()),
                     Some(_) => update::check_offer(&file_name, size, &sha256).and_then(|_| update::verify(&connection.remote_id(), &version, size, &sha256, &signature)).err(),
                 };
                 match (refusal, device) {
@@ -806,7 +857,10 @@ mod tests {
         assert!(b.remote_agent(a.addr(), "t0", "abra a calculadora").await.unwrap_err().contains("não está conectado"));
         let code = a.show_code();
         b.pair_with(a.addr(), &code).await.unwrap();
-        // Pareado, mas "Controlar este PC" desligado: o PC de destino decide (o executor de teste recusa).
+        // Pareado já vem com tudo ligado.
+        assert_eq!(b.remote_agent(a.addr(), "t0b", "abra a calculadora").await.unwrap(), "feito: abra a calculadora");
+        a.set_permissions(&b.id(), Permissions { usar_ia: true, controlar: false, atualizar: false }).unwrap();
+        // "Controlar este PC" desligado: o PC de destino decide (o executor de teste recusa).
         assert_eq!(b.remote_agent(a.addr(), "t1", "abra a calculadora").await.unwrap_err(), "Recusado neste computador.");
         a.set_permissions(&b.id(), Permissions { usar_ia: true, controlar: true, atualizar: false }).unwrap();
         assert_eq!(b.remote_agent(a.addr(), "t2", "abra a calculadora").await.unwrap(), "feito: abra a calculadora");
@@ -843,7 +897,8 @@ mod tests {
         assert!(b.send_update(a.addr(), &file, &sha, &mut |_, _| {}).await.unwrap_err().contains("não está conectado"));
         let code = a.show_code();
         b.pair_with(a.addr(), &code).await.unwrap();
-        // Pareado, mas "Instalar atualizações aqui" desligado (padrão): recusado.
+        a.set_permissions(&b.id(), Permissions { usar_ia: true, controlar: false, atualizar: false }).unwrap();
+        // Pareado, mas "Instalar atualizações aqui" desligado: recusado.
         assert!(b.send_update(a.addr(), &file, &sha, &mut |_, _| {}).await.unwrap_err().contains("não permite instalar"));
         a.set_permissions(&b.id(), Permissions { usar_ia: true, controlar: false, atualizar: true }).unwrap();
         // SHA-256 que não bate com a assinatura/arquivo: recusado.
@@ -880,6 +935,30 @@ mod tests {
         assert!(b.send_update(a.addr(), &file, &sha, &mut |_, _| {}).await.unwrap_err().contains("depois"));
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(installed.lock().unwrap().is_empty());
+        a.shutdown().await;
+        b.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn code_stays_while_valid_and_history_keeps_addresses() {
+        let a = Node::start_for_test("a7", fake("x")).await.unwrap();
+        let b = Node::start_for_test("b7", fake("x")).await.unwrap();
+        let (code, left) = a.current_code();
+        assert!(left > 290);
+        assert_eq!(a.current_code().0, code);
+        b.pair_with(a.addr(), &code).await.unwrap();
+        // Código usado: aparece outro.
+        assert_ne!(a.current_code().0, code);
+        // O histórico guardou por onde conectou, dos dois lados.
+        let saved = b.inner.trust.lock().unwrap().get(&a.id()).unwrap().clone();
+        assert!(!saved.addrs.is_empty());
+        assert!(saved.last_seen > 0);
+        assert!(a.inner.trust.lock().unwrap().get(&b.id()).is_some_and(|device| !device.addrs.is_empty()));
+        // Sem o que a descoberta viu, o endereço salvo basta para reconectar.
+        b.inner.seen.lock().unwrap().clear();
+        let info = b.reconnect(&a.id()).await.unwrap();
+        assert_eq!(info.name, "a7");
+        assert!(b.devices().iter().any(|device| device.id == a.id() && device.online && device.last_seen.is_some()));
         a.shutdown().await;
         b.shutdown().await;
     }

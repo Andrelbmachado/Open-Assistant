@@ -267,6 +267,27 @@ pub fn net_show_code(state: State<NetState>) -> Result<String, String> {
     Ok(state.node()?.show_code())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentCode {
+    code: String,
+    expires_in: u64,
+}
+
+/// Código que fica sempre no topo da tela Remoto (troca sozinho quando expira ou é usado).
+#[tauri::command]
+pub fn net_current_code(state: State<NetState>) -> Result<CurrentCode, String> {
+    let (code, expires_in) = state.node()?.current_code();
+    Ok(CurrentCode { code, expires_in })
+}
+
+/// Reconecta a um computador do histórico só clicando nele.
+#[tauri::command]
+pub async fn net_reconnect(state: State<'_, NetState>, device_id: String) -> Result<(), String> {
+    let node = state.node()?.clone();
+    tokio::time::timeout(Duration::from_secs(20), node.reconnect(&device_id)).await.map_err(|_| "O outro computador não respondeu (está ligado e com o app aberto?).".to_string())?.map(|_| ())
+}
+
 #[tauri::command]
 pub async fn net_pair(state: State<'_, NetState>, device_id: String, code: String) -> Result<(), String> {
     let node = state.node()?.clone();
@@ -327,11 +348,14 @@ pub async fn net_lan_neighbors() -> Result<Vec<Neighbor>, String> {
     .map_err(|error| error.to_string())?
 }
 
-/// Mostra no Explorador o arquivo do app para copiar a outro computador (o instalador `.exe` vem na fase 3).
+/// Mostra no Explorador o instalador (ou, se não houver, o próprio app) para copiar a outro computador.
 #[tauri::command]
-pub fn net_reveal_installer() -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    std::process::Command::new("explorer").arg(format!("/select,{}", exe.display())).spawn().map_err(|error| error.to_string())?;
+pub fn net_reveal_installer(app: AppHandle) -> Result<(), String> {
+    let file = match update::find_installer(&installer_dirs(&app)) {
+        Some(installer) => installer.path,
+        None => std::env::current_exe().map_err(|error| error.to_string())?,
+    };
+    std::process::Command::new("explorer").arg(format!("/select,{}", file.display())).spawn().map_err(|error| error.to_string())?;
     Ok(())
 }
 

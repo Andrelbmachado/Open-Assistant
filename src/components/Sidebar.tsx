@@ -102,7 +102,7 @@ export function Sidebar() {
         {userMenuOpen && <div className="user-menu"><button onClick={() => { dispatch({ type: "settings", open: true }); setUserMenuOpen(false); }}><Settings size={15} /><span>Configurações</span></button></div>}
         <button className="user-row" onClick={() => setUserMenuOpen((open) => !open)} aria-expanded={userMenuOpen}><span className="avatar">{initials}</span><span className="user-name"><strong>{displayName}</strong></span></button>
         <button className={`runtime-location connection-${connection.level}`} title={`${runtime} · ${connection.detail}
-Clique para ver os computadores da rede`} aria-label={`${runtime}: ${connection.label}. Abrir computadores da rede`} onClick={() => dispatch({ type: "view", view: "network" })}>{runsLocally ? <Monitor size={15} /> : <Cloud size={15} />}<i className="connection-line" aria-hidden="true"><b /></i></button>
+Clique para abrir Remoto (computadores conectados)`} aria-label={`${runtime}: ${connection.label}. Abrir Remoto`} onClick={() => dispatch({ type: "view", view: "network" })}>{runsLocally ? <Monitor size={15} /> : <Cloud size={15} />}<i className="connection-line" aria-hidden="true"><b /></i></button>
       </footer>
     </aside>
   );

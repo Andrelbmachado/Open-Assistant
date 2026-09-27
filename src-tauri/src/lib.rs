@@ -1722,6 +1722,8 @@ pub fn run() {
             network::net_installer_info,
             network::net_send_update,
             network::net_update_reply,
+            network::net_current_code,
+            network::net_reconnect,
             network::net_set_internet,
             obscura::browser_open,
             agent::skill_create,

@@ -51,6 +51,11 @@ impl PairCode {
         self.expires_at.saturating_duration_since(now)
     }
 
+    /// Ainda aceita tentativas (não expirou, não foi usado, não travou): a tela Remoto mostra este mesmo código.
+    pub fn usable(&self, now: Instant) -> bool {
+        self.attempts_left > 0 && now <= self.expires_at
+    }
+
     pub fn check(&mut self, input: &str, now: Instant) -> PairCheck {
         if self.attempts_left == 0 {
             return PairCheck::Locked;
@@ -81,7 +86,8 @@ pub struct Permissions {
 
 impl Default for Permissions {
     fn default() -> Self {
-        Permissions { usar_ia: true, controlar: false, atualizar: false }
+        // Tela Remoto: quem você pareou pode tudo (a instalação de atualizações ainda pede confirmação aqui).
+        Permissions { usar_ia: true, controlar: true, atualizar: true }
     }
 }
 
@@ -91,6 +97,13 @@ pub struct TrustedDevice {
     pub info: DeviceInfo,
     pub permissions: Permissions,
     pub paired_at: u64,
+    /// Histórico: últimos endereços por onde conectou (rede local e servidor de retransmissão), para reconectar
+    /// só clicando no computador, mesmo sem a descoberta da rede local.
+    #[serde(default)]
+    pub addrs: Vec<iroh::TransportAddr>,
+    /// Última vez que respondeu (segundos desde 1970); 0 = nunca depois do pareamento.
+    #[serde(default)]
+    pub last_seen: u64,
 }
 
 pub struct TrustStore {
@@ -100,7 +113,11 @@ pub struct TrustStore {
 
 impl TrustStore {
     pub fn load(path: &Path) -> TrustStore {
-        let devices = fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+        let mut devices: Vec<TrustedDevice> = fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+        // A tela Remoto não tem mais as caixas de permissão: todo computador pareado fica com tudo ligado.
+        for device in &mut devices {
+            device.permissions = Permissions::default();
+        }
         TrustStore { path: path.to_path_buf(), devices }
     }
 
@@ -158,6 +175,8 @@ mod tests {
     fn code_expires_after_five_minutes() {
         let now = Instant::now();
         let mut code = PairCode::new(now);
+        assert!(code.usable(now));
+        assert!(!code.usable(now + Duration::from_secs(301)));
         let right = code.code().to_string();
         assert_eq!(code.check(&right, now + Duration::from_secs(301)), PairCheck::Expired);
     }
@@ -167,12 +186,22 @@ mod tests {
         let path = std::env::temp_dir().join(format!("oa-confiaveis-{}.json", std::process::id()));
         let mut store = TrustStore::load(&path);
         let info = DeviceInfo { id: "abc".into(), name: "PC-Sala".into(), kind: DeviceKind::Desktop, os: "Windows".into(), mac: None, gpu: Some("RTX 5070".into()), models: vec![] };
-        store.upsert(TrustedDevice { info, permissions: Permissions::default(), paired_at: 1 });
+        let addr = iroh::TransportAddr::Ip("192.168.0.20:50698".parse().unwrap());
+        store.upsert(TrustedDevice { info, permissions: Permissions { usar_ia: false, controlar: false, atualizar: false }, paired_at: 1, addrs: vec![addr.clone()], last_seen: 42 });
         store.save().unwrap();
         let loaded = TrustStore::load(&path);
-        assert_eq!(loaded.get("abc").unwrap().permissions, Permissions { usar_ia: true, controlar: false, atualizar: false });
+        let device = loaded.get("abc").unwrap();
+        // Tudo ligado ao carregar; o histórico de endereços volta igual.
+        assert_eq!(device.permissions, Permissions { usar_ia: true, controlar: true, atualizar: true });
+        assert_eq!(device.addrs, vec![addr]);
+        assert_eq!(device.last_seen, 42);
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.contains("\"usarIA\": true"));
+        assert!(text.contains("\"usarIA\": false"));
+        // Arquivo antigo (sem histórico) continua abrindo.
+        fs::write(&path, r#"[{"info":{"id":"x","name":"Mac","kind":"macbook","os":"macOS","mac":null,"gpu":null,"models":[]},"permissions":{"usarIA":true,"controlar":false,"atualizar":false},"pairedAt":5}]"#).unwrap();
+        let old = TrustStore::load(&path);
+        assert_eq!(old.get("x").unwrap().addrs, vec![]);
+        assert_eq!(old.get("x").unwrap().last_seen, 0);
         let _ = fs::remove_file(&path);
     }
 }

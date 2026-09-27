@@ -18,6 +18,34 @@ export interface NetDevice {
   self: boolean;
   link?: "local" | "internet";
   permissions?: { usarIA: boolean; controlar: boolean; atualizar: boolean };
+  /** Última vez que respondeu (segundos desde 1970): histórico dos computadores já conectados. */
+  lastSeen?: number;
+}
+
+/** Link para conectar outro computador de uma vez: endereço deste + o código atual. */
+export const CONNECT_LINK_PREFIX = "openassistant://conectar/";
+
+export function connectLink(deviceId: string, code: string): string {
+  return `${CONNECT_LINK_PREFIX}${deviceId}?codigo=${code}`;
+}
+
+/** Aceita o link (`openassistant://conectar/<endereço>?codigo=123456`) ou só o endereço colado (como o app do Mac mostra). */
+export function parseConnectLink(text: string): { deviceId: string; code: string | null } | null {
+  const value = text.trim();
+  const link = value.match(/^openassistant:\/\/conectar\/([0-9a-f]{64})(?:\?codigo=([\d\s-]+))?$/i);
+  if (link) return { deviceId: link[1].toLowerCase(), code: link[2] ? normalizePairCode(link[2]) : null };
+  return /^[0-9a-f]{64}$/i.test(value) ? { deviceId: value.toLowerCase(), code: null } : null;
+}
+
+/** "agora", "há 5 min", "há 3 h", "há 2 dias". */
+export function lastSeenLabel(seconds: number | undefined, now = Date.now() / 1000): string {
+  if (!seconds) return "nunca";
+  const ago = Math.max(0, now - seconds);
+  if (ago < 60) return "agora";
+  if (ago < 3600) return `há ${Math.floor(ago / 60)} min`;
+  if (ago < 86400) return `há ${Math.floor(ago / 3600)} h`;
+  const days = Math.floor(ago / 86400);
+  return `há ${days} ${days === 1 ? "dia" : "dias"}`;
 }
 
 export const REMOTE_PREFIX = "remote:";

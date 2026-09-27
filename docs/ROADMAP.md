@@ -219,6 +219,14 @@ Design e testes de viabilidade: `docs/superpowers/specs/2026-09-27-novas-ferrame
 - [x] Verificado: 2 testes Rust de ponta a ponta + E2E com dois apps (sem permissão → recusa; Depois → nada baixado; Instalar agora → 10 MB em 0,6 s, arquivo idêntico). `OPEN_ASSISTANT_UPDATE_DRY_RUN=1` confere sem instalar (testes)
 - [ ] Falta: teste com um segundo PC físico instalando de verdade; Mac/Linux (prompt entregue para o Codex: mesmo protocolo, recusar instalador de outro sistema)
 
+## 18. Tela Remoto (sessão 7, pedido depois da primeira conexão Mac ↔ PC)
+- [x] "Rede" virou **Remoto**: o mapa ocupa a tela toda; código deste computador sempre no topo (troca sozinho ao expirar/ser usado) com "Copiar link"
+- [x] Visível e Internet viraram interruptores; botão **+** com Conectar por código, Conectar por link (`openassistant://conectar/<endereço>?codigo=…` ou só o endereço, como o Mac mostra) e **Já conectados**
+- [x] Histórico: `confiaveis.json` guarda os últimos endereços (IP/retransmissão) e a última vez visto; reconectar é só clicar (`net_reconnect`), mesmo sem a descoberta local
+- [x] Sem caixas de permissão: quem é pareado pode tudo (usar a IA, controlar, mandar atualizações — a instalação continua pedindo confirmação)
+- [x] **Scan**: só depois de clicar aparecem os achados na rede (com o app → Conectar; sem o app → Enviar instalador, que abre a pasta do instalador)
+- [ ] Mac ainda não executa tarefas do agente vindas do PC (lado do app do Mac)
+
 Obscura (medido em 2026-09-27): bom em sites de documentação/simples (react.dev, Hacker News, Wikipedia: 2–3× mais texto que o download simples, com links, ~1,5 s); fraco em sites comerciais pesados/anti-robô (g1 travava 35 s; Amazon e Mercado Livre devolvem página de bloqueio; resultados do YouTube não aparecem; a build "stealth" não resolveu). Corrigido: `read_url` roda os dois em paralelo, Obscura com limite de 10 s, e fica com o texto mais útil.
 
 ## Próximos passos sugeridos (sessão 7)
