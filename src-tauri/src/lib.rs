@@ -689,6 +689,11 @@ fn parse_ollama_tags(value: &serde_json::Value) -> Vec<OllamaModel> {
         .unwrap_or_default()
 }
 
+/// Nomes dos modelos do Ollama deste computador (o que a rede oferece aos outros); vazio se o Ollama estiver fechado.
+pub(crate) fn ollama_model_names() -> Vec<String> {
+    list_ollama_models().map(|models| models.into_iter().map(|model| model.name).collect()).unwrap_or_default()
+}
+
 fn list_ollama_models() -> Result<Vec<OllamaModel>, String> {
     let value: serde_json::Value = ollama_agent(Duration::from_secs(10))
         .get(&format!("{OLLAMA_URL}/api/tags"))
@@ -1358,6 +1363,55 @@ fn register_chat(app: &AppHandle, request_id: &str) -> Result<Arc<AtomicBool>, S
         .clone())
 }
 
+/// Chat com o Ollama de outro computador da rede (ROADMAP §15). Emite `ollama-chat-delta` como o local,
+/// então o chat e o agente não mudam; cancela pelo mesmo `ollama_cancel_chat`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn remote_chat(
+    app: AppHandle,
+    net: State<'_, network::NetState>,
+    request_id: String,
+    device_id: String,
+    model: String,
+    messages: serde_json::Value,
+    think: Option<bool>,
+    think_level: Option<String>,
+    options: Option<serde_json::Value>,
+) -> Result<OllamaChatResult, String> {
+    let node = net.node()?.clone();
+    let addr = node.addr_of(&device_id)?;
+    let cancel = register_chat(&app, &request_id)?;
+    let request = network::chat_request(&request_id, &model, messages, think, think_level, options, cancel.clone());
+    let emitter = app.clone();
+    let local_id = request_id.clone();
+    let outcome = node
+        .remote_chat(addr, request, &mut move |mut delta| {
+            // O id do pedido é sempre o daqui (o outro computador pode ter recebido outro).
+            delta["requestId"] = serde_json::Value::String(local_id.clone());
+            let _ = emitter.emit(CHAT_DELTA_EVENT, delta);
+        })
+        .await;
+    if let Ok(mut chats) = app.state::<AppState>().ollama_chats.lock() {
+        chats.remove(&request_id);
+    }
+    match outcome {
+        Ok(value) => serde_json::from_value(value).map_err(|error| format!("Resposta inválida do outro computador: {error}")),
+        Err(_) if cancel.load(Ordering::SeqCst) => Ok(OllamaChatResult {
+            model,
+            content: String::new(),
+            thinking: String::new(),
+            cancelled: true,
+            eval_count: None,
+            eval_duration_ns: None,
+            tokens_per_second: None,
+            thinking_tokens: 0,
+            prompt_eval_count: None,
+            tool_calls: Vec::new(),
+        }),
+        Err(error) => Err(error),
+    }
+}
+
 /// Sinaliza o cancelamento de uma geração (Ollama, nuvem ou BitNet) pelo id da requisição.
 #[tauri::command]
 fn ollama_cancel_chat(state: State<AppState>, request_id: String) -> Result<(), String> {
@@ -1616,6 +1670,7 @@ pub fn run() {
     };
     builder
         .manage(AppState::default())
+        .manage(network::NetState::default())
         .manage(tools::ToolsState::default())
         .manage(imagegen::ImageState::default())
         .manage(speech::SpeechState::default())
@@ -1628,6 +1683,7 @@ pub fn run() {
             // Apps do menu Iniciar para o reconhecimento rápido ("abre o word") sem esperar o 1º pedido.
             let handle = app.handle().clone();
             std::thread::spawn(move || semantic::warm_up(&handle));
+            network::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1651,6 +1707,15 @@ pub fn run() {
             ollama_stop_pull,
             ollama_chat,
             ollama_cancel_chat,
+            remote_chat,
+            network::net_status,
+            network::net_devices,
+            network::net_show_code,
+            network::net_pair,
+            network::net_forget,
+            network::net_set_permissions,
+            network::net_set_visible,
+            network::net_lan_neighbors,
             bitnet_chat,
             cloud_chat,
             tools::tools_status,
