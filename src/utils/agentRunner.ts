@@ -11,7 +11,8 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { EFFORT_INFO, type EffortLevel } from "./effort";
-import { ollamaModelId } from "./aiService";
+import { chatInvokeArgs, ollamaModelId } from "./aiService";
+import { parseRemoteModel } from "./network";
 import { BITNET_MODEL_PREFIX } from "./localCatalog";
 import type { ActionCandidate } from "../store/store";
 import { parseMoveIntent } from "./moveIntent";
@@ -305,7 +306,8 @@ async function runAgentTask(options: AgentRunOptions): Promise<AgentResult> {
     }
 
     if (options.model.startsWith(BITNET_MODEL_PREFIX)) throw new Error("O BitNet não usa ferramentas. Para controlar o PC, escolha um modelo com ferramentas, como o Qwen3.5.");
-    const modelId = ollamaModelId(options.model);
+    // Modelo de outro computador da rede: ele pensa, as ferramentas (mãos) continuam rodando aqui.
+    const modelId = parseRemoteModel(options.model)?.model ?? ollamaModelId(options.model);
     if (!modelId) throw new Error("Escolha um modelo local do Ollama com ferramentas (ex.: qwen3.5:9b) para controlar o PC.");
 
     // 2. Loop com o modelo.
@@ -338,14 +340,14 @@ async function runAgentTask(options: AgentRunOptions): Promise<AgentResult> {
     const maxSteps = options.maxSteps ?? 24;
     for (let turn = 0; turn < maxSteps; turn++) {
       if (options.isCancelled()) return { text: "Tarefa interrompida.", steps, source: `Agente · Ollama (${modelId})` };
-      last = await invoke<ChatResult>("ollama_chat", {
+      const call = chatInvokeArgs(options.model, {
         requestId: options.requestId,
-        model: modelId,
         messages: keepLatestImage(messages),
         think: effort?.think ?? false,
         thinkLevel: effort?.think ? effort.thinkLevel : undefined,
         options: { tools, numCtx: NUM_CTX },
       });
+      last = await invoke<ChatResult>(call.command, call.args);
       if (last.cancelled || options.isCancelled()) return { text: "Tarefa interrompida.", steps, source: `Agente · Ollama (${modelId})` };
       const calls = last.toolCalls ?? [];
       if (!calls.length) {

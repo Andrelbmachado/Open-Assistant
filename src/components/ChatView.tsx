@@ -39,6 +39,8 @@ import { activityLabel, nextOrbitalState, type OrbitalState } from "../utils/orb
 import { isQAOffline } from "../utils/qaMode";
 import { getAIMeterSummary } from "../utils/aiMeter";
 import { appendDictation, getVisibleTokensPerSecond, nextComposerPopover, type ComposerPopover, type GenerationMetric } from "../utils/composerState";
+import { parseRemoteModel, remoteModelId } from "../utils/network";
+import { usableRemoteDevices, useNetDevices } from "../store/network";
 import { BITNET_MODEL, buildLocalModelOptions, formatBytes, OLLAMA_MODEL_PREFIX, resolveChatModel, type LocalModelOption } from "../utils/localCatalog";
 import { describePull } from "../utils/localOperation";
 import { headingText, tokenizeInline } from "../utils/inlineMarkdown";
@@ -141,6 +143,7 @@ async function readAttachments(files: File[]): Promise<{ images: string[]; text:
 /** Chat de uma área do workspace; `chatId` é a conversa daquela área (cada área tem a sua). */
 export function ChatView({ chatId }: { chatId?: string } = {}) {
   const { state, dispatch } = useStore();
+  const netDevices = useNetDevices();
   const local = useLocalModels();
   const tools = useTools();
   const [draft, setDraft] = useState("");
@@ -460,7 +463,7 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
 
   /** O agente usa o Ollama (ferramentas); com modelo em nuvem/BitNet no chat, usa o modelo local preferido. */
   function agentModelFor(model: string | undefined): string {
-    if (model && ollamaModelId(model)) return model;
+    if (model && (ollamaModelId(model) || parseRemoteModel(model))) return model;
     const preferred = state.preferredModel && ollamaModelId(state.preferredModel) ? state.preferredModel : undefined;
     const installed = preferred ?? (installedIds[0] ? `${OLLAMA_MODEL_PREFIX}${installedIds[0]}` : undefined);
     if (!installed) throw new Error("Para controlar o PC, baixe um modelo local com ferramentas (ex.: qwen3.5:9b) em Configurações › Modelos locais.");
@@ -1079,6 +1082,16 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
     return <button key={option.id} className="model-mode-row downloadable" title={`${option.reason} Clique para baixar.`} onClick={() => openModelSettings(option.id)}>{name}<small>{downloading ? `${describePull(pull).percent ?? 0}%` : formatBytes(option.sizeBytes)}</small><Download size={13} /></button>;
   }
 
+  /** Modelos de outros computadores da rede (ele pensa; as ferramentas continuam neste PC). */
+  function remoteRows() {
+    return usableRemoteDevices(netDevices).flatMap((device) => device.models.map((model) => {
+      const value = remoteModelId(device.id, model);
+      const active = chatModel === value;
+      const name = <span className="model-row-name"><b>{model}</b><code title={device.gpu ?? device.name}>{device.name}</code></span>;
+      return <button key={value} className={`model-mode-row ${active ? "active" : ""}`} title={`${model} rodando em ${device.name}${device.gpu ? ` (${device.gpu})` : ""}`} onClick={() => { dispatch({ type: "setModel", chatId: chat.id, model: value }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>rede</small>{active ? <Check size={14} /> : <span />}</button>;
+    }));
+  }
+
   function bitnetRow() {
     const installed = tools.installed.has("bitnet-2b4t");
     const active = chatModel === BITNET_MODEL;
@@ -1171,6 +1184,8 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
                 <span className="menu-section-label">Instalados</span>
                 {installedOptions.length === 0 && <small className="local-model-empty">{local.ollama === "online" ? "Nenhum modelo baixado ainda" : "Inicie o Ollama para listar os modelos"}</small>}
                 {installedOptions.map(modelRow)}
+                {remoteRows().length > 0 && <span className="menu-section-label">Computadores da rede</span>}
+                {remoteRows()}
                 <span className="menu-section-label">Nuvem · chave de API</span>
                 {allCloudProviders().flatMap(cloudRows)}
                 <span className="menu-section-label">Microsoft BitNet · 1 bit</span>

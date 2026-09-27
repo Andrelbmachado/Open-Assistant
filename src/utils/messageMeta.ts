@@ -1,8 +1,11 @@
 import { BITNET_MODEL_PREFIX, LOCAL_MODEL_CATALOG, OLLAMA_MODEL_PREFIX } from "./localCatalog";
+import { parseRemoteModel } from "./network";
 import { cloudDisplayName } from "./cloudModels";
 
 /** Nome exibido no título das respostas: o rótulo do catálogo ou o id do Ollama. */
 export function modelDisplayName(model: string | undefined, source?: string): string {
+  const remote = model ? parseRemoteModel(model) : null;
+  if (remote) return `${modelDisplayName(`${OLLAMA_MODEL_PREFIX}${remote.model}`)} · rede`;
   if (model?.startsWith(BITNET_MODEL_PREFIX) || source?.startsWith("BitNet")) return "BitNet b1.58 2B4T";
   const cloud = model ? cloudDisplayName(model) : undefined;
   if (cloud) return cloud;

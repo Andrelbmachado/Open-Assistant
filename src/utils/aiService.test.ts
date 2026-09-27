@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { askAI, NO_LOCAL_MODEL_ERROR } from "./aiService";
+import { askAI, chatInvokeArgs, NO_LOCAL_MODEL_ERROR } from "./aiService";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -108,5 +108,14 @@ describe("askAI", () => {
 
     const args = invokeMock.mock.calls[0][1] as { messages: { images?: string[] }[] };
     expect(args.messages[args.messages.length - 1].images).toEqual(["aGVsbG8="]);
+  });
+});
+
+describe("chatInvokeArgs", () => {
+  it("routes remote models to remote_chat with the device id", () => {
+    expect(chatInvokeArgs("remote:abc:qwen3.5:9b", { requestId: "r", messages: [] })).toEqual({ command: "remote_chat", args: { requestId: "r", messages: [], deviceId: "abc", model: "qwen3.5:9b" } });
+  });
+  it("keeps local models on ollama_chat", () => {
+    expect(chatInvokeArgs("Ollama: qwen3.5:9b", { requestId: "r", messages: [] })).toEqual({ command: "ollama_chat", args: { requestId: "r", messages: [], model: "qwen3.5:9b" } });
   });
 });

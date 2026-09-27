@@ -4,6 +4,7 @@ import { EFFORT_INFO, type EffortLevel } from "./effort";
 import { BITNET_MODEL_PREFIX, OLLAMA_MODEL_PREFIX } from "./localCatalog";
 import { allCloudProviders, cloudDisplayName, parseCloudModel } from "./cloudModels";
 import { createOfflineQAReply, isQAOffline } from "./qaMode";
+import { parseRemoteModel } from "./network";
 
 export interface AIMessage {
   role: "user" | "assistant" | "system";
@@ -97,6 +98,13 @@ export function ollamaModelId(model: string): string | undefined {
   return model.slice(OLLAMA_MODEL_PREFIX.length).trim() || undefined;
 }
 
+/** Modelo `remote:<id>:<modelo>` roda no Ollama de outro computador da rede (mesmos eventos de streaming). */
+export function chatInvokeArgs(model: string, base: Record<string, unknown>): { command: "ollama_chat" | "remote_chat"; args: Record<string, unknown> } {
+  const remote = parseRemoteModel(model);
+  if (remote) return { command: "remote_chat", args: { ...base, deviceId: remote.deviceId, model: remote.model } };
+  return { command: "ollama_chat", args: { ...base, model: ollamaModelId(model) ?? model } };
+}
+
 /**
  * Envia a conversa ao Ollama local pelo backend. Não há fallback para nuvem nem
  * resposta simulada: qualquer falha do Ollama é repassada ao chat.
@@ -149,7 +157,8 @@ export async function askAI(model: string, messages: AIMessage[], options: AskOp
   if (model.startsWith(BITNET_MODEL_PREFIX)) return askBitnet(messages, requestId, options);
   const cloud = parseCloudModel(model);
   if (cloud) return askCloud(cloud.providerId, cloud.model, messages, requestId, options);
-  const modelId = ollamaModelId(model);
+  const remote = parseRemoteModel(model);
+  const modelId = remote?.model ?? ollamaModelId(model);
   if (!modelId) throw new Error(NO_LOCAL_MODEL_ERROR);
   const effort = options.effort ? EFFORT_INFO[options.effort] : undefined;
 
@@ -157,20 +166,20 @@ export async function askAI(model: string, messages: AIMessage[], options: AskOp
     if (event.payload.requestId === requestId) options.onDelta?.(event.payload);
   });
   try {
-    const result = await invoke<OllamaChatResult>("ollama_chat", {
+    const { command, args } = chatInvokeArgs(model, {
       requestId,
-      model: modelId,
       messages: [{ role: "system", content: systemPromptFor(options.effort, options.memory, options.allowComputerControl ? "tool" : "none", options.voice) }, ...messages],
       think: effort?.think ?? options.think ?? false,
       thinkLevel: effort?.think ? effort.thinkLevel : undefined,
       options: options.allowComputerControl ? { tools: [COMPUTER_TOOL] } : undefined,
     });
+    const result = await invoke<OllamaChatResult>(command, args);
     const wantsComputer = Boolean(result.toolCalls?.some((call) => call.function?.name === COMPUTER_TOOL_NAME)) || hasComputerMarker(result.content);
     return {
       wantsComputer,
       text: result.content.trim(),
       thinking: result.thinking.trim() || undefined,
-      source: `Ollama (${result.model})`,
+      source: remote ? `Rede (${result.model})` : `Ollama (${result.model})`,
       tokensPerSecond: result.tokensPerSecond ?? undefined,
       tokens: result.evalCount ?? undefined,
       thinkingTokens: result.thinkingTokens ?? undefined,
