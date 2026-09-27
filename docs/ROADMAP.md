@@ -195,7 +195,7 @@ Design: `docs/superpowers/specs/2026-09-27-rede-de-computadores-design.md` · Pl
 - [x] Fase 1: página **Rede** aberta pelo ícone de computador da barra lateral: malha com ícones próprios (PC de mesa, notebook Windows, MacBook, Mac de mesa), nome e linha entre cada par
 - [x] Fase 1: aparelhos da rede sem o app (IP + MAC) com "Enviar instalador"
 - [x] Fase 1: chat e agente usando o modelo de outro computador (resposta em streaming; o agente controla o computador onde está o chat)
-- [ ] Fase 2: mandar tarefas para o agente de outro computador (permissão "Controlar este PC", confirmação no PC controlado)
+- [x] Fase 2: mandar tarefas para o agente de outro computador ("no PC-Sala, abra a calculadora" no chat; cartão Permitir/Recusar no PC de destino quando "Controlar este PC" está desligado; fluxo do sistema "Controle remoto" no Node Editor). Verificado com dois apps: tarefa feita e recusa voltam ao chat
 - [ ] Fase 3: instalador (`.exe` NSIS) e atualizações assinadas empurradas pelo computador dono para os PCs abaixo dele
 - [ ] Fase 4: conexão fora de casa (código fixo, conta, servidor de diretório/retransmissão da empresa): decisão de infraestrutura pendente
 - [ ] Fase 5: app para macOS (necessário para o cenário "estou no MacBook")

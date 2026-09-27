@@ -65,3 +65,23 @@ export function meshLayout(devices: NetDevice[], width: number, height: number) 
   }
   return { nodes, edges };
 }
+
+const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * "No PC-Sala, abra o Chrome" → tarefa para o agente daquele computador (fase 2 da rede).
+ * Só vale para computadores conectados (pareados) que não são este. Hífen, espaço e maiúsculas no nome não importam.
+ */
+export function parseRemoteTarget(text: string, devices: NetDevice[]): { deviceId: string; deviceName: string; task: string } | null {
+  const candidates = devices.filter((device) => device.paired && !device.self).sort((a, b) => b.name.length - a.name.length);
+  for (const device of candidates) {
+    const name = device.name.trim().split(/[-_\s]+/).map(escapeRegex).join("[-_\\s]+");
+    if (!name) continue;
+    const pattern = new RegExp(`^\\s*(?:no|na|pelo|pela|em|usando o|usando a)\\s+(?:(?:computador|pc|notebook|note|mac|macbook)\\s+)?${name}(?=$|[\\s,:;.-])[\\s,:;.-]*(.*)$`, "iu");
+    const match = text.match(pattern);
+    if (!match) continue;
+    const task = match[1].trim();
+    return task ? { deviceId: device.id, deviceName: device.name, task } : null;
+  }
+  return null;
+}

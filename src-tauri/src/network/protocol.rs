@@ -27,6 +27,10 @@ pub enum Message {
     },
     ChatDelta { delta: serde_json::Value },
     ChatDone { result: serde_json::Value },
+    /// Tarefa para o agente do outro computador (fase 2): ele age lá, com a política de segurança de lá.
+    #[serde(rename_all = "camelCase")]
+    AgentTask { request_id: String, task: String },
+    AgentResult { ok: bool, text: String },
     Error { message: String },
 }
 

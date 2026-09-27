@@ -7,6 +7,7 @@ describe("message meta", () => {
     expect(modelDisplayName("Ollama: meu-modelo:latest")).toBe("meu-modelo:latest");
     expect(modelDisplayName(undefined, "Ollama (gemma3:4b)")).toBe("Gemma 3 4B");
     expect(modelDisplayName(undefined)).toBe("Open Assistant");
+    expect(modelDisplayName("remote:abc:qwen3.5:9b")).toBe("Qwen3.5 9B · rede");
   });
 
   it("formata o cronômetro e os tokens de raciocínio", () => {

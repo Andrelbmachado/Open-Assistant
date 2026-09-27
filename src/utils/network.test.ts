@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPairCode, meshLayout, normalizePairCode, parseRemoteModel, remoteModelId, type NetDevice } from "./network";
+import { formatPairCode, meshLayout, normalizePairCode, parseRemoteModel, parseRemoteTarget, remoteModelId, type NetDevice } from "./network";
 
 const dev = (id: string, extra: Partial<NetDevice> = {}): NetDevice => ({ id, name: id, kind: "desktop", os: "Windows 11", models: [], online: true, paired: true, self: false, link: "local", ...extra });
 
@@ -34,5 +34,20 @@ describe("meshLayout", () => {
   it("does not link unpaired devices (they are only discovered)", () => {
     const layout = meshLayout([dev("eu", { self: true }), dev("vizinho", { paired: false })], 600, 400);
     expect(layout.edges).toEqual([]);
+  });
+});
+
+describe("parseRemoteTarget", () => {
+  const list = [dev("eu", { self: true, name: "NOTEBOOK" }), dev("sala", { name: "PC-Sala" }), dev("quarto", { name: "Desktop Quarto", paired: false })];
+  it("finds 'no <computador>, <tarefa>' for paired computers", () => {
+    expect(parseRemoteTarget("no PC-Sala, abra a calculadora", list)).toEqual({ deviceId: "sala", deviceName: "PC-Sala", task: "abra a calculadora" });
+    expect(parseRemoteTarget("No pc sala abra o chrome", list)).toEqual({ deviceId: "sala", deviceName: "PC-Sala", task: "abra o chrome" });
+    expect(parseRemoteTarget("pelo computador PC-Sala: mostre a área de trabalho", list)?.task).toBe("mostre a área de trabalho");
+  });
+  it("ignores unpaired computers, this computer and ordinary messages", () => {
+    expect(parseRemoteTarget("no Desktop Quarto, abra o chrome", list)).toBeNull();
+    expect(parseRemoteTarget("no NOTEBOOK, abra o chrome", list)).toBeNull();
+    expect(parseRemoteTarget("no Brasil, qual a capital?", list)).toBeNull();
+    expect(parseRemoteTarget("no PC-Sala", list)).toBeNull();
   });
 });

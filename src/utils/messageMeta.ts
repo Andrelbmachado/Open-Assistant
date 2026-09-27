@@ -20,6 +20,8 @@ export function replyFooter(model: string | undefined, source: string | undefine
   if (source?.startsWith("Catálogo")) return "Ação rápida · sem tokens";
   if (source === "Calculadora") return "Calculadora do app · sem tokens";
   if (source === "Open Assistant") return "Open Assistant · sem tokens";
+  // Tarefa feita pelo agente de outro computador da rede ("Rede · agente do PC-Sala").
+  if (source?.startsWith("Rede · agente")) return source;
   const parts = [modelDisplayName(model, source)];
   if (tokens) parts.push(`${formatTokenCount(tokens)} tokens`);
   if (tokensPerSecond) parts.push(`${Math.round(tokensPerSecond)} tok/s`);

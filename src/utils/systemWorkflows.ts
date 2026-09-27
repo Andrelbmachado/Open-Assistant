@@ -6,6 +6,7 @@
 import { buildWorkflow, type WorkflowDoc } from "./workflow";
 
 export const SYS_MEMORY_SAVE = "sys-memoria-salvar";
+export const SYS_REMOTE_CONTROL = "sys-rede-controle";
 
 export interface SystemAgent { id: string; name: string; role: string; workflowId: string }
 
@@ -25,10 +26,22 @@ export const SYSTEM_WORKFLOWS: WorkflowDoc[] = [
     ],
     connections: [{ from: "mensagem", to: "detectar" }, { from: "detectar", to: "juntar" }, { from: "juntar", to: "gravar" }],
   }),
+  systemDoc(SYS_REMOTE_CONTROL, {
+    name: "Controle remoto",
+    description: "Outro computador da sua rede pede para o agente deste PC fazer algo. Sem a permissão \"Controlar este PC\", quem está aqui aprova antes.",
+    nodes: [
+      { id: "pedido", kind: "trace.start", title: "Pedido de outro computador", params: { about: "Chega pelo túnel criptografado da rede (iroh), só de computadores conectados por código.", code: "src-tauri/src/network/node.rs (AgentTask)" } },
+      { id: "confirmar", kind: "trace.step", title: "Confirmação neste PC", params: { about: "Se \"Controlar este PC\" estiver desligado, aparece um cartão para você permitir ou recusar.", code: "src/components/RemoteTaskHost.tsx" } },
+      { id: "agente", kind: "trace.step", title: "Agente deste PC", params: { about: "O agente local faz a tarefa com a política de segurança daqui (Perguntar / Automático / Somente leitura).", code: "src/utils/agentRunner.ts (runAgent)" } },
+      { id: "responder", kind: "trace.step", title: "Resposta ao outro computador", params: { about: "O resultado volta para o chat de quem pediu.", code: "net_agent_reply (Rust)" } },
+    ],
+    connections: [{ from: "pedido", to: "confirmar" }, { from: "confirmar", to: "agente" }, { from: "agente", to: "responder" }],
+  }),
 ];
 
 export const SYSTEM_AGENTS: SystemAgent[] = [
   { id: "sys-agente-memoria", name: "Memória", role: "Guarda o que você pede para lembrar em memoria-da-ia.md.", workflowId: SYS_MEMORY_SAVE },
+  { id: "sys-agente-controle", name: "Controle remoto", role: "Recebe tarefas de outros computadores da sua rede e pede sua aprovação.", workflowId: SYS_REMOTE_CONTROL },
 ];
 
 export function systemWorkflow(id?: string): WorkflowDoc | undefined {

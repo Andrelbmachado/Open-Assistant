@@ -7,22 +7,37 @@ pub mod protocol;
 
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use node::{ChatExecutor, NetDeviceView, Node, NodeConfig};
+use node::{AgentExecutor, AgentTaskData, ChatExecutor, NetDeviceView, Node, NodeConfig};
 use pairing::Permissions;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub const DEVICES_EVENT: &str = "net-devices-changed";
+/// Tarefa de agente vinda de outro computador: a tela deste PC confirma (se preciso), roda o agente e responde.
+pub const AGENT_TASK_EVENT: &str = "net-agent-task";
 
 #[derive(Default)]
 pub struct NetState {
     node: OnceLock<Node>,
     error: OnceLock<String>,
+    /// Tarefas remotas esperando a tela responder (`net_agent_reply`).
+    pending: Mutex<HashMap<String, tokio::sync::oneshot::Sender<Result<String, String>>>>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AgentTaskEvent {
+    id: String,
+    from_id: String,
+    from_name: String,
+    task: String,
+    needs_confirm: bool,
 }
 
 impl NetState {
@@ -80,6 +95,26 @@ async fn start_node(app: &AppHandle) -> Result<Node, String> {
         })?;
         serde_json::to_value(result).map_err(|error| error.to_string())
     });
+    let tasks_app = app.clone();
+    let agent: AgentExecutor = Arc::new(move |task: AgentTaskData| {
+        let app = tasks_app.clone();
+        Box::pin(async move {
+            let id = uuid::Uuid::new_v4().to_string();
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            app.state::<NetState>().pending.lock().map_err(|_| "estado da rede indisponível")?.insert(id.clone(), sender);
+            let event = AgentTaskEvent { id: id.clone(), from_id: task.from_id, from_name: task.from_name, task: task.task, needs_confirm: task.needs_confirm };
+            app.emit(AGENT_TASK_EVENT, event).map_err(|error| error.to_string())?;
+            let outcome = tokio::time::timeout(Duration::from_secs(590), receiver).await;
+            if let Ok(mut pending) = app.state::<NetState>().pending.lock() {
+                pending.remove(&id);
+            }
+            match outcome {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err("O app do outro computador fechou antes de responder.".into()),
+                Err(_) => Err("Ninguém respondeu no outro computador.".into()),
+            }
+        })
+    });
     let emitter = app.clone();
     Node::start(NodeConfig {
         dir,
@@ -87,6 +122,7 @@ async fn start_node(app: &AppHandle) -> Result<Node, String> {
         info,
         mdns: true,
         executor,
+        agent,
         on_change: Arc::new(move || {
             let _ = emitter.emit(DEVICES_EVENT, ());
         }),
@@ -183,6 +219,22 @@ pub fn net_reveal_installer() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     std::process::Command::new("explorer").arg(format!("/select,{}", exe.display())).spawn().map_err(|error| error.to_string())?;
     Ok(())
+}
+
+/// A tela deste PC terminou (ou recusou) uma tarefa que veio de outro computador.
+#[tauri::command]
+pub fn net_agent_reply(state: State<NetState>, id: String, ok: bool, text: String) -> Result<(), String> {
+    let sender = state.pending.lock().map_err(|_| "estado da rede indisponível")?.remove(&id).ok_or("Tarefa não encontrada (pode ter expirado).")?;
+    let _ = sender.send(if ok { Ok(text) } else { Err(text) });
+    Ok(())
+}
+
+/// Manda uma tarefa para o agente de outro computador (ele controla aquele PC) e devolve a resposta dele.
+#[tauri::command]
+pub async fn remote_agent(state: State<'_, NetState>, device_id: String, task: String, request_id: String) -> Result<String, String> {
+    let node = state.node()?.clone();
+    let addr = node.addr_of(&device_id)?;
+    node.remote_agent(addr, &request_id, &task).await
 }
 
 /// Cancelamento do chat remoto usa o mesmo mapa do `ollama_cancel_chat`.

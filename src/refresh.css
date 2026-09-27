@@ -935,3 +935,21 @@ html.agent-cursor-page, html.agent-cursor-page body, html.agent-cursor-page #roo
 .network-view { position: relative; }
 /* Pedido em andamento para outro computador: a linha da malha flui (mesma animação das ligações dos nodes). */
 .mesh-edge.flowing { stroke: var(--action, #0a84ff); stroke-width: 2.2; stroke-dasharray: 7 6; animation: connection-dash .6s linear infinite; }
+
+/* Tarefas que outros computadores mandam para este (rede, fase 2). */
+.remote-task-stack { position: fixed; right: 18px; bottom: 18px; z-index: 60; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 36px)); }
+.remote-task-card { display: flex; flex-direction: column; gap: 8px; box-shadow: 0 12px 40px rgba(0, 0, 0, .45); }
+.remote-task-card.ask { border-color: color-mix(in srgb, var(--action, #0a84ff) 60%, transparent); }
+.remote-task-card header { display: flex; align-items: center; gap: 10px; }
+.remote-task-card header div { flex: 1; display: flex; flex-direction: column; }
+.remote-task-card header small { color: var(--muted); font-size: calc(11px * var(--fs-body, 1)); }
+.remote-task-text { margin: 0; font-size: calc(13px * var(--fs-body, 1)); }
+.remote-task-card footer { display: flex; justify-content: flex-end; gap: 8px; }
+.remote-task-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: calc(11.5px * var(--fs-body, 1)); color: var(--muted); }
+.remote-task-steps li { display: flex; align-items: center; gap: 6px; }
+.remote-task-steps li.error, .remote-task-steps li.denied { color: #ff6b6b; }
+.remote-task-confirm { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 8px; background: color-mix(in srgb, #ffb020 12%, transparent); font-size: calc(12px * var(--fs-body, 1)); }
+.remote-task-confirm span { flex: 1; }
+.remote-task-result { margin: 0; font-size: calc(12.5px * var(--fs-body, 1)); white-space: pre-wrap; }
+.remote-task-result.error { color: #ff8a8a; }
+.remote-task-card header b { font-size: calc(13px * var(--fs-body, 1)); font-weight: 600; }

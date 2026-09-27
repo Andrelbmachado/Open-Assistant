@@ -39,7 +39,7 @@ import { activityLabel, nextOrbitalState, type OrbitalState } from "../utils/orb
 import { isQAOffline } from "../utils/qaMode";
 import { getAIMeterSummary } from "../utils/aiMeter";
 import { appendDictation, getVisibleTokensPerSecond, nextComposerPopover, type ComposerPopover, type GenerationMetric } from "../utils/composerState";
-import { parseRemoteModel, remoteModelId } from "../utils/network";
+import { parseRemoteModel, parseRemoteTarget, remoteModelId } from "../utils/network";
 import { usableRemoteDevices, useNetDevices } from "../store/network";
 import { BITNET_MODEL, buildLocalModelOptions, formatBytes, OLLAMA_MODEL_PREFIX, resolveChatModel, type LocalModelOption } from "../utils/localCatalog";
 import { describePull } from "../utils/localOperation";
@@ -639,6 +639,16 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
         return;
       }
       if (!isQAOffline()) {
+        // 1b. "No PC-Sala, abra o Chrome": a tarefa vai para o agente daquele computador da rede (ele confirma lá).
+        const remoteTarget = plainText ? parseRemoteTarget(sourceText, netDevices) : null;
+        if (remoteTarget) {
+          dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: `Pedindo ao ${remoteTarget.deviceName}: “${remoteTarget.task}”…`, loading: true, source: `Rede · ${remoteTarget.deviceName}` } });
+          const text = await invoke<string>("remote_agent", { deviceId: remoteTarget.deviceId, task: remoteTarget.task, requestId });
+          if (cancelled()) return;
+          dispatch({ type: "updateMessage", chatId, messageId: assistantMsgId, patch: { text: `**${remoteTarget.deviceName}:** ${text}`, loading: false, source: `Rede · agente do ${remoteTarget.deviceName}` } });
+          finish(text);
+          return;
+        }
         // 2. "/skill" ou "@conector": direto para o agente.
         if (sentInvocations.length) { await controlComputer(); return; }
         if (plainText) {

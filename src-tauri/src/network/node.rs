@@ -33,6 +33,19 @@ pub struct ChatRequestData {
 /// Quem responde os pedidos de chat (no app: `run_chat_with` com o Ollama local). Recebe os pedaços por callback.
 pub type ChatExecutor = Arc<dyn Fn(ChatRequestData, &mut dyn FnMut(serde_json::Value)) -> Result<serde_json::Value, String> + Send + Sync>;
 
+/// Tarefa de agente que chegou de outro computador.
+pub struct AgentTaskData {
+    pub request_id: String,
+    pub task: String,
+    pub from_id: String,
+    pub from_name: String,
+    /// A permissão "Controlar este PC" está desligada: quem está aqui precisa aprovar.
+    pub needs_confirm: bool,
+}
+
+/// Quem executa as tarefas de agente (no app: a tela deste PC confirma e roda o agente local).
+pub type AgentExecutor = Arc<dyn Fn(AgentTaskData) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>> + Send + Sync>;
+
 /// Computador visto recentemente (respondeu um Hello ou nos mandou um).
 #[derive(Clone)]
 struct Seen {
@@ -50,6 +63,7 @@ pub struct NodeConfig {
     pub info: DeviceInfo,
     pub mdns: bool,
     pub executor: ChatExecutor,
+    pub agent: AgentExecutor,
     pub on_change: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -61,6 +75,7 @@ struct Inner {
     code: Mutex<Option<PairCode>>,
     seen: Mutex<HashMap<String, Seen>>,
     executor: ChatExecutor,
+    agent: AgentExecutor,
     on_change: Arc<dyn Fn() + Send + Sync>,
     visible: AtomicBool,
 }
@@ -118,6 +133,7 @@ impl Node {
                 code: Mutex::new(None),
                 seen: Mutex::new(HashMap::new()),
                 executor: config.executor,
+                agent: config.agent,
                 on_change: config.on_change,
                 visible: AtomicBool::new(true),
             }),
@@ -170,7 +186,8 @@ impl Node {
         let dir = std::env::temp_dir().join(format!("oa-node-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let info = DeviceInfo { id: String::new(), name: name.into(), kind: DeviceKind::Desktop, os: "Windows".into(), mac: None, gpu: None, models: vec!["qwen3.5:9b".into()] };
-        Node::start(NodeConfig { dir, key: SecretKey::generate(), info, mdns: false, executor: Arc::new(executor), on_change: Arc::new(|| {}) }).await
+        let agent: AgentExecutor = Arc::new(|task: AgentTaskData| Box::pin(async move { if task.needs_confirm { Err("Recusado neste computador.".to_string()) } else { Ok(format!("feito: {}", task.task)) } }));
+        Node::start(NodeConfig { dir, key: SecretKey::generate(), info, mdns: false, executor: Arc::new(executor), agent, on_change: Arc::new(|| {}) }).await
     }
 
     pub fn id(&self) -> String {
@@ -369,6 +386,20 @@ impl Node {
         result
     }
 
+    /// Manda uma tarefa para o agente de outro computador (ele age lá) e espera a resposta.
+    pub async fn remote_agent(&self, addr: EndpointAddr, request_id: &str, task: &str) -> Result<String, String> {
+        let (_connection, mut send, mut recv) = self.open(addr).await?;
+        write_message(&mut send, &Message::AgentTask { request_id: request_id.into(), task: task.into() }).await?;
+        let reply = read_message(&mut recv).await?;
+        let _ = send.finish();
+        match reply {
+            Some(Message::AgentResult { ok: true, text }) => Ok(text),
+            Some(Message::AgentResult { text, .. }) | Some(Message::Error { message: text }) => Err(text),
+            None => Err("O outro computador encerrou a conexão.".into()),
+            _ => Err("Resposta inesperada.".into()),
+        }
+    }
+
     /// Todos os computadores para a página Rede: este, os confiáveis e os descobertos na rede local.
     pub fn devices(&self) -> Vec<NetDeviceView> {
         let me = self.info();
@@ -497,6 +528,21 @@ impl Node {
                     let _ = write_message(&mut send, &reply).await;
                 }
             }
+            Some(Message::AgentTask { request_id, task }) => {
+                let device = self.inner.trust.lock().unwrap().get(&remote).cloned();
+                let reply = match device {
+                    None => Message::Error { message: "Este computador não está conectado a este aqui.".into() },
+                    Some(device) => {
+                        let data = AgentTaskData { request_id, task, from_id: remote.clone(), from_name: device.info.name.clone(), needs_confirm: !device.permissions.controlar };
+                        match tokio::time::timeout(Duration::from_secs(600), (self.inner.agent)(data)).await {
+                            Ok(Ok(text)) => Message::AgentResult { ok: true, text },
+                            Ok(Err(text)) => Message::AgentResult { ok: false, text },
+                            Err(_) => Message::AgentResult { ok: false, text: "A tarefa passou de 10 minutos e foi encerrada.".into() },
+                        }
+                    }
+                };
+                write_message(&mut send, &reply).await?;
+            }
             _ => {
                 write_message(&mut send, &Message::Error { message: "Pedido desconhecido.".into() }).await?;
             }
@@ -579,6 +625,22 @@ mod tests {
         assert!(!b.trusts(&a.id()));
         let refused = b.remote_chat(a.addr(), chat("r2", serde_json::json!([])), &mut |_| {}).await;
         assert!(refused.unwrap_err().contains("não tem permissão"));
+        a.shutdown().await;
+        b.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn agent_task_needs_pairing_and_permission() {
+        let a = Node::start_for_test("a4", fake("x")).await.unwrap();
+        let b = Node::start_for_test("b4", fake("x")).await.unwrap();
+        // Sem pareamento: recusado.
+        assert!(b.remote_agent(a.addr(), "t0", "abra a calculadora").await.unwrap_err().contains("não está conectado"));
+        let code = a.show_code();
+        b.pair_with(a.addr(), &code).await.unwrap();
+        // Pareado, mas "Controlar este PC" desligado: o PC de destino decide (o executor de teste recusa).
+        assert_eq!(b.remote_agent(a.addr(), "t1", "abra a calculadora").await.unwrap_err(), "Recusado neste computador.");
+        a.set_permissions(&b.id(), Permissions { usar_ia: true, controlar: true, atualizar: false }).unwrap();
+        assert_eq!(b.remote_agent(a.addr(), "t2", "abra a calculadora").await.unwrap(), "feito: abra a calculadora");
         a.shutdown().await;
         b.shutdown().await;
     }
