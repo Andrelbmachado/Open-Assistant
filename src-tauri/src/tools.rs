@@ -63,11 +63,16 @@ use super::imagegen::{DIFFUSERS_RUNTIME, SD_RUNTIME};
 const SD_CPP_URL: &str = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-920-2f88688/sd-master-2f88688-bin-win-cuda12-x64.zip";
 const SD_CUDART_URL: &str = "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-920-2f88688/cudart-sd-bin-win-cu12-x64.zip";
 
+/// Obscura fixado (2026-09-26): browser sem janela em Rust (V8 + CDP) que o agente usa para ler páginas.
+pub const OBSCURA_TOOL: &str = "obscura";
+const OBSCURA_URL: &str = "https://github.com/h4ckf0r0day/obscura/releases/download/v0.2.3/obscura-x86_64-windows.zip";
+
 /// rclone fixado (2026-09): lista, baixa e envia arquivos de ~70 nuvens com login pelo navegador.
 pub const RCLONE: &str = "rclone";
 const RCLONE_URL: &str = "https://github.com/rclone/rclone/releases/download/v1.75.1/rclone-v1.75.1-windows-amd64.zip";
 
 pub const RECIPES: &[Recipe] = &[
+    Recipe { id: "obscura", requires: &[], steps: &[Step::Archive(OBSCURA_URL)] },
     Recipe {
         id: SHERPA_RUNTIME,
         requires: &[],
