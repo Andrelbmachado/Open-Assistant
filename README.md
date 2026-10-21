@@ -1,4 +1,39 @@
-# Open Assistant para Windows
+# Open Assistant
+
+**Seu assistente pessoal open source, gratuito, que faz tudo — rodando no seu computador ou com a sua chave de API.**
+
+O Open Assistant é um bot generalista no estilo de um assistente de IA completo: conversa, ouve e fala, controla o computador, usa ferramentas e conectores MCP e monta fluxos de agentes. Ele também é a **base do [Design-Master](https://github.com/Andrelbmachado/Design-Master)**, que será o Open Assistant especializado em design.
+
+## Visão
+- 100% open source e gratuito.
+- **Local primeiro** (Ollama, BitNet, voz offline) e, opcionalmente, **com chave de API** de provedores em nuvem.
+- Um agente que executa tarefas de verdade no computador, com permissões claras e segurança.
+- Plataforma para assistentes especializados (o primeiro será o Design-Master).
+
+## Status atual (out/2026)
+| Área | Status |
+|---|---|
+| App desktop Windows (Tauri 2 + Rust + React) | ✅ existe |
+| Chat com modelos locais via Ollama, anexos e BitNet | ✅ existe |
+| Voz local (sherpa-onnx, Whisper/Parakeet, Piper) | ✅ existe |
+| Agente que controla o PC + skills | ✅ existe |
+| Conectores MCP, terminal, canvas de workflows | ✅ existe |
+| Chat com provedores em nuvem via chave de API | 🟡 chaves já são salvas, mas o chat ainda usa só modelos locais — **planejado** |
+| macOS / Linux | 🟡 existe só um projeto SwiftUI antigo em `macos-archive/` — **planejado** |
+| Memória de longo prazo / RAG | **planejado** |
+
+## Roadmap resumido
+1. Provedores em nuvem com chave de API no chat.
+2. Memória e RAG com abstenção ("não está nos documentos").
+3. Segurança: testes contra prompt injection vindo de páginas lidas pelo agente.
+4. Versões macOS e Linux.
+5. Base de "assistentes especializados" → Design-Master.
+
+Plano completo em **[PLANO.md](PLANO.md)**.
+
+---
+
+## Detalhes técnicos
 
 Aplicativo desktop nativo para Windows construído com Tauri 2, Rust, React e TypeScript. A interface usa o sistema visual Liquidglass Flat, otimizado para WebView2 e inspirado no Fluent Design do Windows 11.
 
@@ -63,3 +98,6 @@ npm start
 - `src/`: Código da interface em React, TypeScript e CSS (Liquidglass Flat).
 - `src-tauri/`: Backend nativo em Rust (Tauri 2, processos de terminal, chamadas ao SO e credenciais).
 - `macos-archive/`: Projeto original em SwiftUI preservado para referência e histórico.
+
+
+> Este README e o PLANO.md foram reorganizados em 21/10/2026 a partir da visão do André. Itens marcados como **planejado** ainda não existem no código.
