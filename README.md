@@ -1,39 +1,94 @@
 # Open Assistant
 
-**Seu assistente pessoal open source, gratuito, que faz tudo — rodando no seu computador ou com a sua chave de API.**
+**Seu assistente pessoal de IA para o Windows: conversa, ouve, fala e mexe no computador por você — rodando no seu PC ou com a sua chave de API.**
 
-O Open Assistant é um bot generalista no estilo de um assistente de IA completo: conversa, ouve e fala, controla o computador, usa ferramentas e conectores MCP e monta fluxos de agentes. Ele também é a **base do [Design-Master](https://github.com/Andrelbmachado/Design-Master)**, que será o Open Assistant especializado em design.
+O Open Assistant é um assistente generalista e gratuito. Ele usa modelos locais (Ollama, BitNet) e voz offline por padrão, aceita provedores em nuvem quando você quiser, e tem um **agente que controla o PC de verdade**: abre programas, clica, digita, roda comandos e usa conectores MCP — sempre com permissões que você controla.
 
-## Visão
-- 100% open source e gratuito.
-- **Local primeiro** (Ollama, BitNet, voz offline) e, opcionalmente, **com chave de API** de provedores em nuvem.
-- Um agente que executa tarefas de verdade no computador, com permissões claras e segurança.
-- Plataforma para assistentes especializados (o primeiro será o Design-Master).
+Ele também é a base do **[Design-Master](https://github.com/Andrelbmachado/Design-Master)**, um Open Assistant especializado em design (planejado).
 
-## Status atual (out/2026)
-| Área | Status |
-|---|---|
-| App desktop Windows (Tauri 2 + Rust + React) | ✅ existe |
-| Chat com modelos locais via Ollama, anexos e BitNet | ✅ existe |
-| Voz local (sherpa-onnx, Whisper/Parakeet, Piper) | ✅ existe |
-| Agente que controla o PC + skills | ✅ existe |
-| Conectores MCP, terminal, canvas de workflows | ✅ existe |
-| Chat com provedores em nuvem via chave de API | 🟡 chaves já são salvas, mas o chat ainda usa só modelos locais — **planejado** |
-| macOS / Linux | 🟡 existe só um projeto SwiftUI antigo em `macos-archive/` — **planejado** |
-| Memória de longo prazo / RAG | **planejado** |
-
-## Roadmap resumido
-1. Provedores em nuvem com chave de API no chat.
-2. Memória e RAG com abstenção ("não está nos documentos").
-3. Segurança: testes contra prompt injection vindo de páginas lidas pelo agente.
-4. Versões macOS e Linux.
-5. Base de "assistentes especializados" → Design-Master.
-
-Plano completo em **[PLANO.md](PLANO.md)**.
+> **Estado:** em desenvolvimento ativo, versão `0.1.0`, só para **Windows 10/11 x64**. Itens marcados como **planejado** ainda não existem no código.
 
 ---
 
-## Detalhes técnicos
+## O que ele já faz
+
+| | Recurso | Onde está no código |
+|---|---|---|
+| 💬 | **Chat com IA local** (Ollama, BitNet b1.58) com streaming, tokens/s reais, anexos de imagem e texto | `src/utils/aiService.ts`, `src-tauri/src/lib.rs`, `bitnet.rs` |
+| ☁️ | **Chat com IA em nuvem** usando sua chave (OpenAI, Anthropic, Google Gemini, DeepSeek, Perplexity, Together, Fireworks e endpoints compatíveis). A chave fica no Gerenciador de Credenciais do Windows e nunca sai do Rust. ⚠️ Ainda não testado com chaves reais | `src-tauri/src/cloud.rs`, `src/utils/cloudModels.ts` |
+| 🖱️ | **Agente que controla o PC**: ações prontas sem gastar tokens (abrir apps/sites, volume, rede, arquivos), UI Automation, prints numerados, mouse e teclado, PowerShell/cmd | `src-tauri/src/agent.rs`, `computer.rs`, `semantic.rs` |
+| 🎙️ | **Voz 100% local**: reconhecimento (NeMo FastConformer PT, Parakeet, Whisper) e síntese (Piper pt-BR ou voz do Windows) | `src-tauri/src/speech.rs` |
+| 🧠 | **Memória de preferências**: "não use emojis", "me chame de…" valem em todas as conversas; editável em Configurações › Memória | `src/utils/memory.ts`, `memoryFile.ts` |
+| 🔌 | **Conectores MCP** no formato do Claude Desktop (Playwright, Windows-MCP, Fetch…), com `/skills` e `@conectores` no chat | `src-tauri/src/mcp.rs` |
+| 🖼️ | **Geração de imagem local** (stable-diffusion.cpp CUDA: FLUX, SD, Qwen-Image…) | `src-tauri/src/imagegen.rs` |
+| 🌐 | **Remoto**: pareia computadores por código de 6 dígitos para usar a GPU de outro PC no chat e mandar tarefas ao agente dele; atualizações assinadas | `src-tauri/src/network/` |
+| 🧩 | **Agentes e workflows visíveis**: editor de nós, fluxos do sistema acendendo ao vivo, "Sonhos" que propõe skills novas | `WorkflowCanvas.tsx`, `AgentsView.tsx`, `workflow.rs` |
+| 🧰 | **Mais**: browser próprio (Obscura), terminal PowerShell/CMD, painel do Windows (CPU/RAM/GPU), Arquivos, Marketplace, desfazer edições do agente | `obscura.rs`, `TerminalView.tsx`, `DashboardView.tsx`, `changes.rs` |
+
+### Segurança do agente
+- Três níveis de acesso no compositor: **Somente leitura**, **Perguntar** e **Acesso total**.
+- A política (permitir / confirmar / negar) é decidida no Rust (`agent::decide`), não na interface.
+- Comandos perigosos são bloqueados; destrutivos sempre pedem confirmação.
+- **Freio de emergência:** leve o mouse ao canto superior esquerdo da tela para interromper o agente.
+
+---
+
+## Começando
+
+### Pré-requisitos
+- Windows 10/11 x64 com WebView2
+- [Node.js](https://nodejs.org/) 20+ e [Rust](https://rustup.rs/) (toolchain MSVC)
+- [Ollama](https://ollama.com/) para modelos locais (o app tem o botão **Iniciar Ollama**)
+- Opcional: placa NVIDIA para geração de imagem e modelos maiores
+
+### Rodar
+```powershell
+git clone https://github.com/Andrelbmachado/Open-Assistant.git
+cd Open-Assistant
+npm install
+npm start          # tauri dev, com hot reload
+```
+Atalhos na raiz: `iniciar-open-assistant.bat` (modo dev) e `abrir-versao-producao.bat` (exe já compilado).
+
+Na primeira abertura: **Configurações › Modelos locais** para baixar um modelo (ex.: `qwen3.5:9b`), e **Configurações › Voz** para baixar o reconhecimento de fala.
+
+### Gerar o executável
+| Comando | Resultado |
+|---|---|
+| `npm run build:app` | `src-tauri/target/release/open-assistant.exe` (portátil) |
+| `npm run build:installer` | Instalador NSIS em `src-tauri/target/release/bundle/nsis/` |
+| `npm run build:qa` | Versão QA offline (sem Ollama real) |
+
+### Testes
+```powershell
+npx tsc --noEmit
+npx vitest run
+cd src-tauri; cargo test --lib
+```
+
+---
+
+## Status e roadmap
+
+| Área | Status |
+|---|---|
+| App Windows (Tauri 2 + Rust + React 19) | ✅ existe |
+| Chat local (Ollama, BitNet), anexos, voz local | ✅ existe |
+| Agente que controla o PC + skills + MCP | ✅ existe |
+| Chat em nuvem com chave de API | 🟡 existe, falta testar com chaves reais |
+| Memória de preferências | ✅ existe |
+| Memória de longo prazo / RAG sobre seus documentos | ⏳ **planejado** |
+| Testes contra prompt injection e suíte de evals | ⏳ **planejado** |
+| CI no GitHub Actions | ⏳ **planejado** |
+| Licença open source (arquivo `LICENSE`) | ⏳ **planejado** — ainda não há licença no repositório |
+| macOS / Linux (Tauri) | ⏳ **planejado** — `macos-archive/` é só o protótipo SwiftUI antigo |
+| Assistentes especializados (Design-Master) | ⏳ **planejado** |
+
+Plano por fases, com critérios de pronto: **[PLANO.md](PLANO.md)** · Histórico detalhado: [docs/ROADMAP.md](docs/ROADMAP.md)
+
+---
+
+## Estrutura
 
 Aplicativo desktop nativo para Windows construído com Tauri 2, Rust, React e TypeScript. A interface usa o sistema visual Liquidglass Flat, otimizado para WebView2 e inspirado no Fluent Design do Windows 11.
 
@@ -49,55 +104,15 @@ Você pode iniciar o Open Assistant de três formas simples:
 ```powershell
 npm start
 ```
-*(ou `npm run tauri dev`)*
+src/            Interface (React + TypeScript); lógica pura em src/utils com testes ao lado
+src-tauri/      Backend em Rust: agente, voz, MCP, nuvem, rede, geração de imagem
+  skills/       Skills do agente (controle-do-windows, abrir-programas, …)
+docs/           Arquitetura, roadmap, specs e planos
+macos-archive/  Protótipo SwiftUI original (só referência)
+```
 
-### 3. Executável e Instaladores Oficiais Gerados
-- **Executável portátil:** `npm run build:app` gera `src-tauri/target/release/open-assistant.exe` (versão normal; `npm run build:qa` gera a versão QA simulada)
-- **Instalador NSIS:** `src-tauri/target/release/bundle/nsis/Open Assistant_0.1.0_x64-setup.exe`
-- **Instalador MSI:** `src-tauri/target/release/bundle/msi/Open Assistant_0.1.0_x64_en-US.msi`
-
----
-
-## Funcionalidades e Recursos
-
-- **Janela Windows Nativa:** Sem moldura padrão, com sombra, controles nativos minimização/maximização/fechamento e região de arraste suave.
-- **Chat com Inteligência Artificial Real:**
-  - Modelos locais via **Ollama** (`127.0.0.1:11434`). Todas as chamadas passam pelo backend Rust — a WebView do Windows (`http://tauri.localhost`) é bloqueada pelo CORS do Ollama.
-  - Seletor do chat em três grupos: **Instalados** (lidos de `/api/tags`, nome exato), **Disponíveis para este PC** e **Incompatíveis** (escuros, com o motivo no hover).
-  - **Configurações › Modelos locais**: card por modelo com tamanho, bytes baixados, MB/s, tempo restante e barra; Pausar/Retomar/Cancelar; **Usar modelo** abre o chat com `Ollama: <id>`.
-  - Respostas em streaming com origem `Ollama (<modelo>)` e tok/s reais (`eval_count / eval_duration`); botão Parar; Esforço Alto ativa o raciocínio em modelos compatíveis.
-  - Sem fallback: com o Ollama desligado o chat mostra o erro e o botão **Iniciar Ollama**.
-  - Chaves de provedores em nuvem ficam no **Gerenciador de Credenciais do Windows**, mas nesta versão o chat usa somente modelos locais.
-  - **Anexos no chat**: fotos e prints vão para modelos com visão (Qwen3.5, Gemma 3, Llama 3.2 Vision); arquivos de texto/código (até 200 KB) entram no prompt.
-  - **Microsoft BitNet b1.58 2B4T** no seletor de modelos (bitnet.cpp compilado no PC, servidor em `127.0.0.1:18090`, encerrado junto com o app).
-- **Modo voz local** (Configurações › Voz):
-  - O `webkitSpeechRecognition` do WebView2 sempre falha com `network` (depende de um serviço em nuvem que o WebView2 não tem) — era o "microfone desconectado". O áudio agora é capturado com `getUserMedia` e transcrito no Rust pelo **sherpa-onnx + Microsoft ONNX Runtime**.
-  - Reconhecimento: NVIDIA NeMo FastConformer PT (recomendado), NVIDIA Parakeet TDT 0.6B v3, OpenAI Whisper small/turbo/large-v3. Síntese: vozes Piper pt-BR ou a voz do Windows.
-  - Escolha de microfone e botão **Testar microfone** (grava, detecta o fim da fala e mostra a transcrição).
-  - A DLL do sherpa-onnx é *delay-loaded*: o exe abre sem ela; a runtime é baixada junto com o primeiro modelo de voz.
-- **Ferramentas de IA** (Configurações › Ferramentas de IA), agrupadas por empresa (NVIDIA, Microsoft, Meta, Google, OpenAI, Open source) e filtráveis por tipo. Cada item tem receita fixa em `src-tauri/src/tools.rs` (a interface só envia o id): download com progresso, ambientes Python isolados via `uv` (NeMo, NeMo Guardrails, WhisperLive, AutoGen, Florence-2, MMS) e modelos do Ollama (Phi-4, Llama 3.2 Vision, Gemma 3). Seamless, LLaMA-Omni e TensorRT-LLM aparecem como indisponíveis no Windows, com o motivo. Tudo fica em `%LOCALAPPDATA%\com.openassistant.windows\tools`.
-- **Agente que controla o PC** (botão **Controlar o PC** no chat): skill `controle-do-windows` com catálogo de ações (abre apps/sites, volume, rede, arquivos, git) executadas sem gastar tokens, comandos PowerShell/cmd, busca web enxuta, leitura da tela por UI Automation, prints numerados (Set-of-Mark), mouse próprio que anima até o alvo e teclado. Permissões em **+ › Acesso ao computador** (Perguntar / Automático / Somente leitura); comandos perigosos são bloqueados e destrutivos sempre pedem confirmação; levar o mouse ao canto superior esquerdo interrompe.
-- **Conectores MCP** (Configurações › Conectores MCP): Playwright, Windows-MCP, Fetch e outros, no formato do Claude Desktop.
-- **Para IAs editarem o projeto**: `AGENTS.md` (mapa, comandos, convenções), `docs/ARCHITECTURE.md` e `docs/ROADMAP.md`.
-- **Workspace Flexível com Painéis Divididos:**
-  - Layout dinâmico estilo Blender com divisão horizontal e vertical, arraste e redimensionamento.
-  - Suporte a alternância entre Chat, Workflow Nodes, Terminal, Agentes, Arquivos de Código e Painel de Controle (Dashboard).
-- **Canvas de Workflows de Agentes:**
-  - Nós visuais conectáveis (Entrada, Agente, Ferramenta, Saída), frames agrupadores, zoom e pan fluidos.
-- **Terminal Integrado Windows:**
-  - Sessões reais em **PowerShell** ou **Command Prompt (CMD)** com leitura de stream contínua em tempo real (UTF-8).
-- **Painel de Configurações:**
-  - Gerenciamento de credenciais locais.
-  - Verificação de status e inicialização de runtimes (Ollama e OpenClaw).
-  - Temas Claro, Escuro e do Sistema, com cores de destaque personalizáveis.
-
----
-
-## Estrutura do Projeto
-
-- `src/`: Código da interface em React, TypeScript e CSS (Liquidglass Flat).
-- `src-tauri/`: Backend nativo em Rust (Tauri 2, processos de terminal, chamadas ao SO e credenciais).
-- `macos-archive/`: Projeto original em SwiftUI preservado para referência e histórico.
-
-
-> Este README e o PLANO.md foram reorganizados em 21/10/2026 a partir da visão do André. Itens marcados como **planejado** ainda não existem no código.
+## Contribuindo (pessoas e IAs)
+- **[AGENTS.md](AGENTS.md)** — mapa do projeto, comandos, convenções e armadilhas conhecidas. Leia antes de mudar código.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — fluxo de dados, eventos e comandos Tauri.
+- **[DESIGN.md](DESIGN.md)** — cores, fontes e componentes da interface.
+- Interface e comentários em **português do Brasil**; nomes no código em inglês.
