@@ -6,6 +6,14 @@ describe("mcp presets", () => {
     expect(MCP_PRESETS.filter((preset) => preset.essential).map((preset) => preset.id)).toEqual(["playwright", "windows-mcp", "fetch"]);
   });
 
+  it("offers a read-only Playwright and a Composio connector", () => {
+    const read = MCP_PRESETS.find((preset) => preset.id === "playwright-read")!;
+    expect(read.args).toContain("--headless");
+    expect(read.args).toContain("--isolated");
+    expect(read.essential).toBeUndefined();
+    expect(MCP_PRESETS.some((preset) => preset.id === "composio")).toBe(true);
+  });
+
   it("adds, toggles and removes servers in Claude Desktop format", () => {
     const playwright = MCP_PRESETS[0];
     let config = addPreset({ mcpServers: {} }, playwright, "C:\\Users\\andre");

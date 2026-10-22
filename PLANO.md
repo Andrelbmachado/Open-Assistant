@@ -3,14 +3,14 @@
 Objetivo: assistente pessoal open source, gratuito, local ou com chave de API, que faz tudo e serve de base para o Design-Master.
 
 ## Fase 0 — Higiene do agente (rápido)
-- [ ] Adicionar ao `CLAUDE.md`/`AGENTS.md` os 4 princípios do Karpathy (Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven).
-- [ ] CI no GitHub Actions: `npm ci`, `npm test` (vitest), `tsc`, `cargo check` em `windows-latest`.
-- [ ] Corrigir no README os links `file:///c:/...` (só funcionam no PC do André).
+- [x] Adicionar ao `CLAUDE.md`/`AGENTS.md` os 4 princípios do Karpathy (Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven). — seção "Princípios (Karpathy)" no `AGENTS.md` (o `CLAUDE.md` já importa o `AGENTS.md`).
+- [x] CI no GitHub Actions: `npm ci`, `npm test` (vitest), `tsc`, `cargo check` em `windows-latest`. — `.github/workflows/ci.yml`.
+- [x] Corrigir no README os links `file:///c:/...` (só funcionam no PC do André). — viraram nomes de arquivo simples.
 
 ## Fase 1 — Local + nuvem
-- [ ] Chat com provedores em nuvem usando as chaves já salvas no Gerenciador de Credenciais (OpenAI, Anthropic, Google, OpenRouter).
-- [ ] Seletor único "Local / Nuvem" com custo estimado por mensagem.
-- [ ] Presets MCP extras: Playwright (modo leitura), Composio.
+- [x] Chat com provedores em nuvem usando as chaves já salvas no Gerenciador de Credenciais (OpenAI, Anthropic, Google, OpenRouter). — já existia para os demais; **OpenRouter** adicionado (`cloud.rs` + `cloudModels.ts`).
+- [x] Seletor único "Local / Nuvem" com custo estimado por mensagem. — o seletor já reúne Instalados/Rede/Nuvem/BitNet; **custo estimado por mensagem** adicionado nas linhas da nuvem (`cloudPricing.ts`).
+- [x] Presets MCP extras: Playwright (modo leitura), Composio. — `mcpPresets.ts` (`playwright-read` e `composio`).
 
 ## Fase 2 — Memória e conhecimento
 - [ ] Memória de longo prazo (Mem0 ou OpenMemory, rodando local).

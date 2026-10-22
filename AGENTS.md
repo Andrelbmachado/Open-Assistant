@@ -8,6 +8,12 @@ Assistente pessoal desktop para Windows: **Tauri 2 (Rust) + React 19 + TypeScrip
 (Ollama, BitNet), voz local (sherpa-onnx), e um **agente que controla o PC** (skill `controle-do-windows`,
 UI Automation, mouse/teclado, PowerShell, conectores MCP). Interface e comentários em **português do Brasil**.
 
+## Princípios (Karpathy) — valem para toda mudança
+1. **Pense antes de codar (Think Before Coding):** entenda o pedido e o código existente antes de editar; diga em uma frase o que vai mudar e por quê.
+2. **Simplicidade primeiro (Simplicity First):** a solução mais simples que resolve. Nada de abstração, dependência ou configuração que o problema atual não exige.
+3. **Mudanças cirúrgicas (Surgical Changes):** mexa só no necessário para a tarefa. Não refatore de passagem, não reformate arquivos inteiros, não troque de estilo sem motivo.
+4. **Guiado pelo objetivo (Goal-Driven):** cada mudança serve a uma meta clara e verificável. Ao terminar, confira que o objetivo foi cumprido (`npx tsc --noEmit && npx vitest run && cargo test --lib`).
+
 ## Comandos
 | Tarefa | Comando (na raiz) |
 |---|---|

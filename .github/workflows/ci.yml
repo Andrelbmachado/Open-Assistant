@@ -1,0 +1,46 @@
+# CI do Open Assistant: roda em cada push/PR no Windows (plataforma-alvo do app).
+# Confere tipos, testes do front (vitest) e compilação do backend Rust (Tauri 2).
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Cancela builds antigos da mesma branch quando chega um push novo.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  front:
+    name: Front (tipos + vitest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Tipos (tsc)
+        run: npx tsc --noEmit
+      - name: Testes (vitest)
+        run: npm test
+
+  rust:
+    name: Backend (cargo check)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Compilar (cargo check)
+        run: cargo check --all-targets
+      - name: Testes do Rust (cargo test --lib)
+        run: cargo test --lib

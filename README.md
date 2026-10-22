@@ -42,8 +42,8 @@ Aplicativo desktop nativo para Windows construído com Tauri 2, Rust, React e Ty
 Você pode iniciar o Open Assistant de três formas simples:
 
 ### 1. Iniciar com 1 Clique (Atalho .bat)
-- Dê um duplo clique no arquivo [`iniciar-open-assistant.bat`](file:///c:/Users/andre/iCloudDrive/Documents/Trabalho/Open%20assistant%20windows/iniciar-open-assistant.bat) para abrir em modo interativo.
-- Ou dê um duplo clique no arquivo [`abrir-versao-producao.bat`](file:///c:/Users/andre/iCloudDrive/Documents/Trabalho/Open%20assistant%20windows/abrir-versao-producao.bat) para abrir o binário nativo compilado.
+- Dê um duplo clique no arquivo `iniciar-open-assistant.bat` (na raiz do projeto) para abrir em modo interativo.
+- Ou dê um duplo clique no arquivo `abrir-versao-producao.bat` para abrir o binário nativo compilado.
 
 ### 2. Pelo Terminal (PowerShell ou CMD)
 ```powershell

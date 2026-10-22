@@ -18,6 +18,7 @@ export interface McpPreset {
 /** Conectores sugeridos; `essential` marca o conjunto mínimo recomendado. */
 export const MCP_PRESETS: McpPreset[] = [
   { id: "playwright", name: "Playwright", company: "Microsoft", runtime: "npx", essential: true, command: "npx", args: ["-y", "@playwright/mcp@latest", "--browser", "chrome"], description: "Navega, clica e preenche páginas pela árvore de acessibilidade, sem prints." },
+  { id: "playwright-read", name: "Playwright (modo leitura)", company: "Microsoft", runtime: "npx", command: "npx", args: ["-y", "@playwright/mcp@latest", "--browser", "chrome", "--headless", "--isolated", "--caps", "pdf,vision"], description: "Abre e lê páginas (snapshot, print e PDF) numa janela isolada e sem rosto, sem salvar sua sessão — bom para pesquisar sem o agente tocar nas suas contas." },
   { id: "windows-mcp", name: "Windows-MCP", company: "CursorTouch", runtime: "uvx", essential: true, command: "uvx", args: ["windows-mcp"], description: "Árvore de interface de qualquer programa do Windows, cliques, digitação e PowerShell." },
   { id: "fetch", name: "Fetch", company: "Anthropic (oficial)", runtime: "uvx", essential: true, command: "uvx", args: ["mcp-server-fetch"], description: "Baixa páginas como Markdown para ler sem abrir o navegador." },
   { id: "chrome-devtools", name: "Chrome DevTools", company: "Google", runtime: "npx", command: "npx", args: ["-y", "chrome-devtools-mcp@latest"], description: "Depura sites no Chrome: console, rede e desempenho." },
@@ -26,6 +27,7 @@ export const MCP_PRESETS: McpPreset[] = [
   { id: "desktop-commander", name: "Desktop Commander", company: "Comunidade", runtime: "npx", command: "npx", args: ["-y", "@wonderwhy-er/desktop-commander"], description: "Terminal persistente e edição de arquivos grandes." },
   { id: "duckduckgo", name: "DuckDuckGo", company: "Comunidade", runtime: "uvx", command: "uvx", args: ["duckduckgo-mcp-server"], description: "Busca na web quando a busca nativa não bastar." },
   { id: "memory", name: "Memory", company: "Anthropic (oficial)", runtime: "npx", command: "npx", args: ["-y", "@modelcontextprotocol/server-memory"], description: "Guarda fatos sobre você entre conversas (grafo de conhecimento)." },
+  { id: "composio", name: "Composio", company: "Composio", runtime: "npx", command: "npx", args: ["-y", "@composio/mcp@latest", "start"], description: "Centenas de apps prontos (Gmail, Calendar, Notion, Slack, GitHub…) num só conector. Precisa de uma conta Composio: edite o JSON para apontar a sua URL/chave." },
 ];
 
 export interface McpServerConfig { command: string; args: string[]; env?: Record<string, string>; disabled?: boolean }
