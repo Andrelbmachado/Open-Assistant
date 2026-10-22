@@ -90,6 +90,19 @@ Plano por fases, com critérios de pronto: **[PLANO.md](PLANO.md)** · Históric
 
 ## Estrutura
 
+Aplicativo desktop nativo para Windows construído com Tauri 2, Rust, React e TypeScript. A interface usa o sistema visual Liquidglass Flat, otimizado para WebView2 e inspirado no Fluent Design do Windows 11.
+
+## Como Executar no seu Windows
+
+Você pode iniciar o Open Assistant de três formas simples:
+
+### 1. Iniciar com 1 Clique (Atalho .bat)
+- Dê um duplo clique no arquivo `iniciar-open-assistant.bat` (na raiz do projeto) para abrir em modo interativo.
+- Ou dê um duplo clique no arquivo `abrir-versao-producao.bat` para abrir o binário nativo compilado.
+
+### 2. Pelo Terminal (PowerShell ou CMD)
+```powershell
+npm start
 ```
 src/            Interface (React + TypeScript); lógica pura em src/utils com testes ao lado
 src-tauri/      Backend em Rust: agente, voz, MCP, nuvem, rede, geração de imagem

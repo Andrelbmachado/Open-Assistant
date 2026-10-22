@@ -16,6 +16,7 @@ import { listen } from "@tauri-apps/api/event";
 import { matchAction, runAgent, runCatalogAction, warmAgent, type AccessMode, type AgentResult, type AgentStep } from "../utils/agentRunner";
 import { invoke } from "@tauri-apps/api/core";
 import { allCloudProviders, CLOUD_PRODUCT_NAMES, cloudModelValue, providerModels } from "../utils/cloudModels";
+import { formatMessageCost } from "../utils/cloudPricing";
 import { memoryPrompt } from "../utils/memory";
 import { learnWithTrace } from "../utils/memoryFlow";
 import { traceSystem } from "../store/systemTrace";
@@ -445,7 +446,8 @@ export function ChatView({ chatId }: { chatId?: string } = {}) {
       const value = cloudModelValue(provider.id, model);
       const active = chatModel === value;
       const name = <span className="model-row-name"><b>{product}</b><code title={model}>{model.split("/").pop()}</code></span>;
-      if (cloudKeys[provider.id]) return <button key={value} className={`model-mode-row ${active ? "active" : ""}`} title={`${provider.name} · ${model}`} onClick={() => { dispatch({ type: "setModel", chatId: chat.id, model: value }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>Nuvem</small>{active ? <Check size={14} /> : <Cloud size={13} />}</button>;
+      const cost = formatMessageCost(provider.id, model);
+      if (cloudKeys[provider.id]) return <button key={value} className={`model-mode-row ${active ? "active" : ""}`} title={`${provider.name} · ${model}${cost ? ` · custo estimado por mensagem: ${cost}` : ""}`} onClick={() => { dispatch({ type: "setModel", chatId: chat.id, model: value }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>{cost || "Nuvem"}</small>{active ? <Check size={14} /> : <Cloud size={13} />}</button>;
       return <button key={value} className="model-mode-row cloud-locked" aria-disabled="true" title="Inativo: adicione uma chave de API para usar este modelo" onClick={() => { dispatch({ type: "settings", open: true, tab: "providers", focusModel: provider.id, notice: `Adicione uma chave de API da ${provider.name} para usar ${product} (${model}).` }); setModelMenuOpen(false); setActivePopover(null); }}>{name}<small>Sem chave</small><KeyRound size={13} /></button>;
     });
   }

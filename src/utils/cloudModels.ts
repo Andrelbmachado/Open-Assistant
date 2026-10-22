@@ -15,13 +15,14 @@ export const BUILTIN_PROVIDERS: ProviderConfig[] = [
   { name: "Perplexity", models: ["sonar", "sonar-pro"] },
   { name: "Together AI", models: ["meta-llama/Llama-3.3-70B-Instruct-Turbo"] },
   { name: "Fireworks", models: ["accounts/fireworks/models/llama-v3p3-70b-instruct"] },
+  { name: "OpenRouter", models: ["openai/gpt-5-mini", "anthropic/claude-sonnet-5", "google/gemini-2.5-flash", "deepseek/deepseek-chat"] },
 ].map(({ name, models }) => ({ id: createProviderId(name), name, kind: "builtin", defaultModel: models[0], models }));
 
 /** Nome amigável no seletor: "ChatGPT · gpt-5", "Gemini · gemini-2.5-flash". */
-export const CLOUD_PRODUCT_NAMES: Record<string, string> = { openai: "ChatGPT", anthropic: "Claude", google: "Gemini", deepseek: "DeepSeek", perplexity: "Perplexity", "together-ai": "Together AI", fireworks: "Fireworks" };
+export const CLOUD_PRODUCT_NAMES: Record<string, string> = { openai: "ChatGPT", anthropic: "Claude", google: "Gemini", deepseek: "DeepSeek", perplexity: "Perplexity", "together-ai": "Together AI", fireworks: "Fireworks", openrouter: "OpenRouter" };
 
 /** Formato da chave, para o placeholder do campo em Provedores. */
-export const KEY_PLACEHOLDERS: Record<string, string> = { openai: "sk-proj-••••••••••••", anthropic: "sk-ant-••••••••••••", google: "AIza••••••••••••••••", deepseek: "sk-••••••••••••••••", perplexity: "pplx-••••••••••••" };
+export const KEY_PLACEHOLDERS: Record<string, string> = { openai: "sk-proj-••••••••••••", anthropic: "sk-ant-••••••••••••", google: "AIza••••••••••••••••", deepseek: "sk-••••••••••••••••", perplexity: "pplx-••••••••••••", openrouter: "sk-or-v1-••••••••••••" };
 
 /** Página onde o usuário cria a chave de cada provedor. */
 export const KEY_PAGES: Record<string, string> = {
@@ -32,6 +33,7 @@ export const KEY_PAGES: Record<string, string> = {
   perplexity: "https://www.perplexity.ai/settings/api",
   "together-ai": "https://api.together.ai/settings/api-keys",
   fireworks: "https://fireworks.ai/account/api-keys",
+  openrouter: "https://openrouter.ai/settings/keys",
 };
 
 /** Modelos de um provedor, sem repetição, com o padrão primeiro. */

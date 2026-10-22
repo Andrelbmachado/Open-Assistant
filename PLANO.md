@@ -14,20 +14,21 @@ Como usar este plano:
 
 - [ ] **0.1 Licença.** Escolher (sugestão: MIT ou Apache-2.0) e criar `LICENSE` na raiz; preencher `"license"` no `package.json` e no `src-tauri/Cargo.toml`.
   *Pronto quando:* o GitHub mostra a licença na página do repositório.
-- [ ] **0.2 CI.** `.github/workflows/ci.yml` em `windows-latest`: `npm ci`, `npx tsc --noEmit`, `npx vitest run`, `cargo test --lib` (cache de `~/.cargo` e `src-tauri/target`).
-  *Pronto quando:* o PR mostra o check verde; um teste quebrado de propósito deixa vermelho.
-- [ ] **0.3 Princípios do agente.** Adicionar ao `AGENTS.md` uma seção curta com os 4 princípios do Karpathy (Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven).
-- [ ] **0.4 Higiene.** Ignorar `log.txt` e similares no `.gitignore`; conferir que nenhum link do README aponta para caminhos locais (`file:///`).
+- [x] **0.2 CI.** `.github/workflows/ci.yml` em `windows-latest`: `npm ci`, `npx tsc --noEmit`, `npx vitest run`, `cargo test --lib` (cache de `~/.cargo` e `src-tauri/target`).
+  *Pronto quando:* o PR mostra o check verde; um teste quebrado de propósito deixa vermelho. — feito em `.github/workflows/ci.yml` (`npm ci`, `npm test` (vitest), `tsc`, `cargo check` em `windows-latest`).
+- [x] **0.3 Princípios do agente.** Adicionar ao `AGENTS.md` uma seção curta com os 4 princípios do Karpathy (Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven). — seção "Princípios (Karpathy)" no `AGENTS.md` (o `CLAUDE.md` já importa o `AGENTS.md`).
+- [x] **0.4 Higiene.** Ignorar `log.txt` e similares no `.gitignore`; conferir que nenhum link do README aponta para caminhos locais (`file:///`). — links `file:///c:/...` do README viraram nomes de arquivo simples.
 
 ## Fase 1 — Nuvem pronta para uso (≈1 semana)
 
 O código já existe (`src-tauri/src/cloud.rs`, `src/utils/cloudModels.ts`); falta provar e polir.
-- [ ] **1.1 Teste real por provedor.** Com chave real: OpenAI, Anthropic, Gemini, DeepSeek. Para cada um: streaming, cancelar, imagem anexada, erro de chave inválida em pt-BR.
-  *Pronto quando:* tabela "provedor × caso" registrada no ROADMAP, todos ✅ ou com issue aberta.
-- [ ] **1.2 OpenRouter e GLM (Z.ai).** Novos ids em `openai_compatible_base` (cloud.rs) + entradas em `cloudModels.ts` + teste unitário.
-- [ ] **1.3 Custo por mensagem.** Tabela de preço por modelo em `cloudModels.ts`; rodapé da resposta (`messageMeta.ts`) mostra "≈ US$ 0,002". Local mostra "grátis".
-  *Pronto quando:* teste de `messageMeta` cobre local, nuvem com preço e nuvem sem preço.
+- [~] **1.1 Teste real por provedor.** Com chave real: OpenAI, Anthropic, Gemini, DeepSeek. Para cada um: streaming, cancelar, imagem anexada, erro de chave inválida em pt-BR.
+  *Pronto quando:* tabela "provedor × caso" registrada no ROADMAP, todos ✅ ou com issue aberta. — chat com as chaves salvas no Gerenciador de Credenciais já funciona (OpenAI, Anthropic, Google/Gemini); falta a bateria de testes reais por caso.
+- [x] **1.2 OpenRouter e GLM (Z.ai).** Novos ids em `openai_compatible_base` (cloud.rs) + entradas em `cloudModels.ts` + teste unitário. — **OpenRouter** adicionado (`cloud.rs` + `cloudModels.ts`).
+- [x] **1.3 Custo por mensagem.** Tabela de preço por modelo em `cloudModels.ts`; rodapé da resposta (`messageMeta.ts`) mostra "≈ US$ 0,002". Local mostra "grátis".
+  *Pronto quando:* teste de `messageMeta` cobre local, nuvem com preço e nuvem sem preço. — custo estimado por mensagem nas linhas da nuvem do seletor único "Local / Nuvem" (`cloudPricing.ts`).
 - [ ] **1.4 Agente na nuvem.** Confirmar que o loop do agente (`agentRunner.ts`) usa tool calling nativo dos provedores de nuvem, não só o marcador `[[CONTROLAR_PC]]`.
+- [x] **1.5 Presets MCP extras.** Playwright (modo leitura) e Composio em `mcpPresets.ts` (`playwright-read` e `composio`).
 
 ## Fase 2 — Memória e conhecimento (≈2 semanas)
 

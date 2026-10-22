@@ -22,6 +22,7 @@ fn openai_compatible_base(provider_id: &str) -> Option<&'static str> {
         "together-ai" => "https://api.together.xyz/v1",
         "fireworks" => "https://api.fireworks.ai/inference/v1",
         "google" => "https://generativelanguage.googleapis.com/v1beta/openai",
+        "openrouter" => "https://openrouter.ai/api/v1",
         _ => return None,
     })
 }
@@ -220,7 +221,7 @@ mod tests {
 
     #[test]
     fn known_providers_have_https_endpoints() {
-        for id in ["openai", "deepseek", "perplexity", "together-ai", "fireworks", "google"] {
+        for id in ["openai", "deepseek", "perplexity", "together-ai", "fireworks", "google", "openrouter"] {
             assert!(openai_compatible_base(id).unwrap().starts_with("https://"));
         }
         assert!(openai_compatible_base("anthropic").is_none());

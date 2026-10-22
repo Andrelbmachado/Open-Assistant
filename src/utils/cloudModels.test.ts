@@ -15,7 +15,7 @@ describe("cloud models", () => {
   });
 
   it("keeps ids compatible with the Rust endpoint table", () => {
-    expect(BUILTIN_PROVIDERS.map((provider) => provider.id)).toEqual(["openai", "anthropic", "google", "deepseek", "perplexity", "together-ai", "fireworks"]);
+    expect(BUILTIN_PROVIDERS.map((provider) => provider.id)).toEqual(["openai", "anthropic", "google", "deepseek", "perplexity", "together-ai", "fireworks", "openrouter"]);
   });
 
   it("offers Gemini with the default model first", () => {
